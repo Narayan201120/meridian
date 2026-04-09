@@ -1,0 +1,14 @@
+{
+  "expo": {
+    "name": "Meridian",
+    "slug": "meridian",
+    "scheme": "meridian",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}

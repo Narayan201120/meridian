@@ -1,9 +1,12 @@
-# dependencies (bun install)
+# dependencies
 node_modules
+.expo
+.expo-shared
 
 # output
 out
 dist
+web-build
 *.tgz
 
 # code coverage
