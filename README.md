@@ -1,17 +1,19 @@
-# Meridian Backend
+# Meridian
 
-Minimal FastAPI scaffold for Meridian's backend services.
+AI-assisted productivity app for fast task capture, calendar-aware planning, and reminders.
 
-## What Exists
-- FastAPI app entrypoint
-- versioned API router
-- health endpoint
-- environment-based settings
-- async SQLAlchemy database session wiring
-- task CRUD API skeleton
-- initial Supabase/Postgres schema migration
+## Current Repo State
 
-## Local Run
+- `backend/`
+  - FastAPI scaffold
+  - async SQLAlchemy database session wiring
+  - task CRUD API skeleton
+- `supabase/`
+  - initial Postgres schema migration
+- `frontend/`
+  - placeholder scaffold only, not yet the real Expo app
+
+## Backend Run
 From `backend/`:
 
 ```bash
@@ -45,7 +47,7 @@ The API rejects task requests without that header.
 The initial SQL migration lives at:
 
 ```text
-..\supabase\migrations\20260409193000_initial_schema.sql
+supabase/migrations/20260409193000_initial_schema.sql
 ```
 
 It creates the first set of Meridian tables, enums, RLS policies, and helper triggers for:
