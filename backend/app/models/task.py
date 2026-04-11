@@ -10,6 +10,10 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.db.base import Base
 
 
+def _enum_values(enum_cls: type[StrEnum]) -> list[str]:
+    return [member.value for member in enum_cls]
+
+
 class TaskStatus(StrEnum):
     INBOX = "inbox"
     SCHEDULED = "scheduled"
@@ -47,13 +51,25 @@ class Task(Base):
     title: Mapped[str] = mapped_column(String(280), nullable=False)
     notes: Mapped[str | None] = mapped_column(Text())
     status: Mapped[TaskStatus] = mapped_column(
-        SqlEnum(TaskStatus, name="task_status", native_enum=True, create_type=False),
+        SqlEnum(
+            TaskStatus,
+            name="task_status",
+            native_enum=True,
+            create_type=False,
+            values_callable=_enum_values,
+        ),
         nullable=False,
         default=TaskStatus.INBOX,
         server_default=TaskStatus.INBOX.value,
     )
     priority: Mapped[TaskPriority] = mapped_column(
-        SqlEnum(TaskPriority, name="task_priority", native_enum=True, create_type=False),
+        SqlEnum(
+            TaskPriority,
+            name="task_priority",
+            native_enum=True,
+            create_type=False,
+            values_callable=_enum_values,
+        ),
         nullable=False,
         default=TaskPriority.MEDIUM,
         server_default=TaskPriority.MEDIUM.value,
@@ -61,13 +77,25 @@ class Task(Base):
     due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     estimated_duration_minutes: Mapped[int | None] = mapped_column(Integer())
     source: Mapped[TaskSource] = mapped_column(
-        SqlEnum(TaskSource, name="task_source", native_enum=True, create_type=False),
+        SqlEnum(
+            TaskSource,
+            name="task_source",
+            native_enum=True,
+            create_type=False,
+            values_callable=_enum_values,
+        ),
         nullable=False,
         default=TaskSource.MANUAL_TEXT,
         server_default=TaskSource.MANUAL_TEXT.value,
     )
     schedule_intent: Mapped[ScheduleIntent] = mapped_column(
-        SqlEnum(ScheduleIntent, name="schedule_intent", native_enum=True, create_type=False),
+        SqlEnum(
+            ScheduleIntent,
+            name="schedule_intent",
+            native_enum=True,
+            create_type=False,
+            values_callable=_enum_values,
+        ),
         nullable=False,
         default=ScheduleIntent.NONE,
         server_default=ScheduleIntent.NONE.value,
@@ -93,4 +121,3 @@ class Task(Base):
         nullable=False,
         server_default=text("now()"),
     )
-

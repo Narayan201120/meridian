@@ -10,8 +10,10 @@ AI-assisted productivity app for fast task capture, calendar-aware planning, and
   - task CRUD API skeleton
 - `supabase/`
   - initial Postgres schema migration
+  - local Supabase CLI config
 - `frontend/`
-  - placeholder scaffold only, not yet the real Expo app
+  - real Expo app scaffold using Bun
+  - first task-oriented screen with demo mode and API mode wiring
 
 ## Backend Run
 From `backend/`:
@@ -42,6 +44,32 @@ X-User-Id: <uuid>
 ```
 
 The API rejects task requests without that header.
+
+For web-based frontend development, the backend now allows local CORS origins for Expo on:
+
+```text
+http://localhost:8081
+http://127.0.0.1:8081
+http://localhost:19006
+http://127.0.0.1:19006
+```
+
+Override them with `MERIDIAN_CORS_ORIGINS` in `backend/.env` if needed.
+
+## Frontend Run
+From `frontend/`:
+
+```bash
+bun install
+bun run typecheck
+bun run start -- --localhost
+```
+
+To put the frontend into API mode instead of demo mode:
+
+1. Copy `frontend/.env.example` to `frontend/.env`
+2. Set `EXPO_PUBLIC_DEV_USER_ID` to a real backend user UUID
+3. Keep `EXPO_PUBLIC_API_BASE_URL` pointed at the FastAPI server
 
 ## Database Foundation
 The initial SQL migration lives at:
