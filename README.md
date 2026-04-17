@@ -7,13 +7,14 @@ AI-assisted productivity app for fast task capture, calendar-aware planning, and
 - `backend/`
   - FastAPI scaffold
   - async SQLAlchemy database session wiring
-  - task CRUD API skeleton
+  - task CRUD API
+  - Supabase JWT verification for protected task routes
 - `supabase/`
   - initial Postgres schema migration
   - local Supabase CLI config
 - `frontend/`
   - real Expo app scaffold using Bun
-  - first task-oriented screen with demo mode and API mode wiring
+  - first task-oriented screen with demo mode and authenticated API mode wiring
 
 ## Backend Run
 From `backend/`:
@@ -37,13 +38,13 @@ Task endpoints are available under:
 /api/v1/tasks
 ```
 
-Until Supabase JWT auth is wired into FastAPI, task endpoints use a temporary header-based identity:
+Task endpoints now expect a Supabase bearer token:
 
 ```text
-X-User-Id: <uuid>
+Authorization: Bearer <access-token>
 ```
 
-The API rejects task requests without that header.
+Set `MERIDIAN_SUPABASE_URL` in `backend/.env` so FastAPI can verify tokens against Supabase JWKS.
 
 For web-based frontend development, the backend now allows local CORS origins for Expo on:
 
@@ -68,8 +69,10 @@ bun run start -- --localhost
 To put the frontend into API mode instead of demo mode:
 
 1. Copy `frontend/.env.example` to `frontend/.env`
-2. Set `EXPO_PUBLIC_DEV_USER_ID` to a real backend user UUID
-3. Keep `EXPO_PUBLIC_API_BASE_URL` pointed at the FastAPI server
+2. Set `EXPO_PUBLIC_SUPABASE_URL` to the local or hosted Supabase URL
+3. Set `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY` to the matching publishable key
+4. Keep `EXPO_PUBLIC_API_BASE_URL` pointed at the FastAPI server
+5. Sign in through the app with a real Supabase user
 
 ## Database Foundation
 The initial SQL migration lives at:

@@ -12,6 +12,13 @@ import {
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 
 import {
+  authRuntime,
+  getCurrentSession,
+  signInWithPassword,
+  signOut,
+  type AuthSession,
+} from "./src/lib/auth";
+import {
   createTask,
   deleteTask,
   describeTaskError,
@@ -23,10 +30,15 @@ import {
 
 export default function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [authSession, setAuthSession] = useState<AuthSession | null>(() => getCurrentSession());
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
   const [title, setTitle] = useState("");
   const [notes, setNotes] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSigningIn, setIsSigningIn] = useState(false);
+  const [isSigningOut, setIsSigningOut] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [activeTaskAction, setActiveTaskAction] = useState<"complete" | "reopen" | "delete" | null>(
@@ -48,8 +60,14 @@ export default function App() {
   }
 
   useEffect(() => {
+    if (tasksRuntime.isApiMode && authSession === null) {
+      setTasks([]);
+      setIsLoading(false);
+      return;
+    }
+
     void loadTasks();
-  }, []);
+  }, [authSession]);
 
   function replaceTask(nextTask: Task) {
     setTasks((currentTasks) =>
@@ -75,6 +93,41 @@ export default function App() {
       setErrorMessage(describeTaskError(error));
     } finally {
       setIsSubmitting(false);
+    }
+  }
+
+  async function handleSignIn() {
+    if (!authEmail.trim() || !authPassword) {
+      setErrorMessage("Enter the email and password for your Supabase user.");
+      return;
+    }
+
+    setIsSigningIn(true);
+    setErrorMessage(null);
+
+    try {
+      const session = await signInWithPassword(authEmail, authPassword);
+      setAuthSession(session);
+      setAuthPassword("");
+    } catch (error) {
+      setErrorMessage(describeTaskError(error));
+    } finally {
+      setIsSigningIn(false);
+    }
+  }
+
+  async function handleSignOut() {
+    setIsSigningOut(true);
+    setErrorMessage(null);
+
+    try {
+      await signOut();
+      setAuthSession(null);
+      setTasks([]);
+    } catch (error) {
+      setErrorMessage(describeTaskError(error));
+    } finally {
+      setIsSigningOut(false);
     }
   }
 
@@ -134,149 +187,224 @@ export default function App() {
               </Text>
               <Text style={styles.modeTitle}>
                 {tasksRuntime.isApiMode
-                  ? "Frontend is calling the backend task routes."
-                  : "Frontend is using local demo data until a dev user UUID is configured."}
+                  ? authSession
+                    ? "Frontend is calling the backend with a Supabase bearer token."
+                    : "Sign in with your Supabase user to load live tasks."
+                  : "Frontend is using local demo data until Supabase auth is configured."}
               </Text>
               <Text style={styles.modeBody}>Base URL: {tasksRuntime.apiBaseUrl}</Text>
+              {tasksRuntime.isApiMode && authSession ? (
+                <Text style={styles.modeBody}>
+                  Signed in as {authSession.user.email ?? authSession.user.id}
+                </Text>
+              ) : null}
             </View>
 
-            <Pressable style={styles.secondaryButton} onPress={() => void loadTasks()}>
-              <Text style={styles.secondaryButtonText}>Refresh</Text>
-            </Pressable>
+            {tasksRuntime.isApiMode && authSession ? (
+              <View style={styles.modeActions}>
+                <Pressable style={styles.secondaryButton} onPress={() => void loadTasks()}>
+                  <Text style={styles.secondaryButtonText}>Refresh</Text>
+                </Pressable>
+
+                <Pressable
+                  style={[styles.secondaryButton, styles.signOutButton]}
+                  onPress={() => void handleSignOut()}
+                  disabled={isSigningOut}
+                >
+                  <Text style={[styles.secondaryButtonText, styles.signOutButtonText]}>
+                    {isSigningOut ? "Signing out..." : "Sign out"}
+                  </Text>
+                </Pressable>
+              </View>
+            ) : (
+              <Pressable style={styles.secondaryButton} onPress={() => void loadTasks()}>
+                <Text style={styles.secondaryButtonText}>
+                  {tasksRuntime.isApiMode ? "Retry" : "Refresh"}
+                </Text>
+              </Pressable>
+            )}
           </View>
 
-          <View style={styles.card}>
-            <Text style={styles.cardEyebrow}>Create task</Text>
-            <Text style={styles.sectionTitle}>Add something real</Text>
-            <Text style={styles.sectionBody}>
-              Keep this first flow narrow: title, optional notes, then send it to the list.
-            </Text>
-
-            <TextInput
-              placeholder="Task title"
-              placeholderTextColor="#7D7A70"
-              style={styles.input}
-              value={title}
-              onChangeText={setTitle}
-            />
-            <TextInput
-              placeholder="Notes (optional)"
-              placeholderTextColor="#7D7A70"
-              style={[styles.input, styles.notesInput]}
-              value={notes}
-              onChangeText={setNotes}
-              multiline
-            />
-
-            <Pressable
-              style={[styles.primaryButton, isSubmitting ? styles.buttonDisabled : null]}
-              onPress={() => void handleCreateTask()}
-              disabled={isSubmitting}
-            >
-              <Text style={styles.primaryButtonText}>
-                {isSubmitting ? "Adding task..." : "Add task"}
+          {tasksRuntime.isApiMode && authSession === null ? (
+            <View style={styles.card}>
+              <Text style={styles.cardEyebrow}>Sign in</Text>
+              <Text style={styles.sectionTitle}>Use your Supabase user</Text>
+              <Text style={styles.sectionBody}>
+                Sign in with the local auth user you created in Supabase Studio so the task flow
+                uses a real bearer token instead of the old dev header.
               </Text>
-            </Pressable>
-          </View>
 
-          {errorMessage ? (
+              <TextInput
+                placeholder="Email"
+                placeholderTextColor="#7D7A70"
+                style={styles.input}
+                value={authEmail}
+                onChangeText={setAuthEmail}
+                autoCapitalize="none"
+                keyboardType="email-address"
+              />
+              <TextInput
+                placeholder="Password"
+                placeholderTextColor="#7D7A70"
+                style={styles.input}
+                value={authPassword}
+                onChangeText={setAuthPassword}
+                secureTextEntry
+              />
+
+              <Pressable
+                style={[styles.primaryButton, isSigningIn ? styles.buttonDisabled : null]}
+                onPress={() => void handleSignIn()}
+                disabled={isSigningIn}
+              >
+                <Text style={styles.primaryButtonText}>
+                  {isSigningIn ? "Signing in..." : "Sign in"}
+                </Text>
+              </Pressable>
+            </View>
+          ) : (
+            <>
+              <View style={styles.card}>
+                <Text style={styles.cardEyebrow}>Create task</Text>
+                <Text style={styles.sectionTitle}>Add something real</Text>
+                <Text style={styles.sectionBody}>
+                  Keep this first flow narrow: title, optional notes, then send it to the list.
+                </Text>
+
+                <TextInput
+                  placeholder="Task title"
+                  placeholderTextColor="#7D7A70"
+                  style={styles.input}
+                  value={title}
+                  onChangeText={setTitle}
+                />
+                <TextInput
+                  placeholder="Notes (optional)"
+                  placeholderTextColor="#7D7A70"
+                  style={[styles.input, styles.notesInput]}
+                  value={notes}
+                  onChangeText={setNotes}
+                  multiline
+                />
+
+                <Pressable
+                  style={[styles.primaryButton, isSubmitting ? styles.buttonDisabled : null]}
+                  onPress={() => void handleCreateTask()}
+                  disabled={isSubmitting}
+                >
+                  <Text style={styles.primaryButtonText}>
+                    {isSubmitting ? "Adding task..." : "Add task"}
+                  </Text>
+                </Pressable>
+              </View>
+
+              {errorMessage ? (
+                <View style={styles.errorCard}>
+                  <Text style={styles.errorLabel}>Current issue</Text>
+                  <Text style={styles.errorText}>{errorMessage}</Text>
+                </View>
+              ) : null}
+
+              <View style={styles.card}>
+                <Text style={styles.cardEyebrow}>Task list</Text>
+                <Text style={styles.sectionTitle}>Inbox</Text>
+                <Text style={styles.sectionBody}>
+                  The UI is now wired for the first real backend-aligned entity in the product.
+                </Text>
+
+                {isLoading ? (
+                  <View style={styles.loadingState}>
+                    <ActivityIndicator size="small" color="#132A24" />
+                    <Text style={styles.loadingText}>Loading tasks...</Text>
+                  </View>
+                ) : null}
+
+                {!isLoading && tasks.length === 0 ? (
+                  <View style={styles.emptyState}>
+                    <Text style={styles.emptyTitle}>No tasks yet</Text>
+                    <Text style={styles.emptyBody}>
+                      Add a task above to seed the first real workflow in the app.
+                    </Text>
+                  </View>
+                ) : null}
+
+                {!isLoading ? (
+                  <View style={styles.taskList}>
+                    {tasks.map((task) => (
+                      <View key={task.id} style={styles.taskCard}>
+                        <View style={styles.taskHeader}>
+                          <Text style={styles.taskTitle}>{task.title}</Text>
+                          <View
+                            style={[
+                              styles.badge,
+                              task.status === "completed" ? styles.completedBadge : null,
+                            ]}
+                          >
+                            <Text style={styles.badgeText}>{task.status}</Text>
+                          </View>
+                        </View>
+
+                        {task.notes ? <Text style={styles.taskNotes}>{task.notes}</Text> : null}
+
+                        <View style={styles.metaRow}>
+                          <Text style={styles.metaText}>Priority: {task.priority}</Text>
+                          <Text style={styles.metaText}>
+                            {task.estimated_duration_minutes
+                              ? `${task.estimated_duration_minutes} min`
+                              : "No estimate"}
+                          </Text>
+                        </View>
+
+                        <View style={styles.taskActionsRow}>
+                          <Pressable
+                            style={[
+                              styles.taskActionButton,
+                              activeTaskId === task.id ? styles.buttonDisabled : null,
+                            ]}
+                            onPress={() => void handleToggleTaskStatus(task)}
+                            disabled={activeTaskId === task.id}
+                          >
+                            <Text style={styles.taskActionButtonText}>
+                              {activeTaskId === task.id && activeTaskAction === "complete"
+                                ? "Completing..."
+                                : activeTaskId === task.id && activeTaskAction === "reopen"
+                                  ? "Reopening..."
+                                  : task.status === "completed"
+                                    ? "Reopen"
+                                    : "Complete"}
+                            </Text>
+                          </Pressable>
+
+                          <Pressable
+                            style={[
+                              styles.taskActionButton,
+                              styles.deleteButton,
+                              activeTaskId === task.id ? styles.buttonDisabled : null,
+                            ]}
+                            onPress={() => void handleDeleteTask(task.id)}
+                            disabled={activeTaskId === task.id}
+                          >
+                            <Text style={[styles.taskActionButtonText, styles.deleteButtonText]}>
+                              {activeTaskId === task.id && activeTaskAction === "delete"
+                                ? "Deleting..."
+                                : "Delete"}
+                            </Text>
+                          </Pressable>
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
+              </View>
+            </>
+          )}
+
+          {tasksRuntime.isApiMode && authSession === null && errorMessage ? (
             <View style={styles.errorCard}>
               <Text style={styles.errorLabel}>Current issue</Text>
               <Text style={styles.errorText}>{errorMessage}</Text>
             </View>
           ) : null}
-
-          <View style={styles.card}>
-            <Text style={styles.cardEyebrow}>Task list</Text>
-            <Text style={styles.sectionTitle}>Inbox</Text>
-            <Text style={styles.sectionBody}>
-              The UI is now wired for the first real backend-aligned entity in the product.
-            </Text>
-
-            {isLoading ? (
-              <View style={styles.loadingState}>
-                <ActivityIndicator size="small" color="#132A24" />
-                <Text style={styles.loadingText}>Loading tasks...</Text>
-              </View>
-            ) : null}
-
-            {!isLoading && tasks.length === 0 ? (
-              <View style={styles.emptyState}>
-                <Text style={styles.emptyTitle}>No tasks yet</Text>
-                <Text style={styles.emptyBody}>
-                  Add a task above to seed the first real workflow in the app.
-                </Text>
-              </View>
-            ) : null}
-
-            {!isLoading ? (
-              <View style={styles.taskList}>
-                {tasks.map((task) => (
-                  <View key={task.id} style={styles.taskCard}>
-                    <View style={styles.taskHeader}>
-                      <Text style={styles.taskTitle}>{task.title}</Text>
-                      <View
-                        style={[
-                          styles.badge,
-                          task.status === "completed" ? styles.completedBadge : null,
-                        ]}
-                      >
-                        <Text style={styles.badgeText}>{task.status}</Text>
-                      </View>
-                    </View>
-
-                    {task.notes ? <Text style={styles.taskNotes}>{task.notes}</Text> : null}
-
-                    <View style={styles.metaRow}>
-                      <Text style={styles.metaText}>Priority: {task.priority}</Text>
-                      <Text style={styles.metaText}>
-                        {task.estimated_duration_minutes
-                          ? `${task.estimated_duration_minutes} min`
-                          : "No estimate"}
-                      </Text>
-                    </View>
-
-                    <View style={styles.taskActionsRow}>
-                      <Pressable
-                        style={[
-                          styles.taskActionButton,
-                          activeTaskId === task.id ? styles.buttonDisabled : null,
-                        ]}
-                        onPress={() => void handleToggleTaskStatus(task)}
-                        disabled={activeTaskId === task.id}
-                      >
-                        <Text style={styles.taskActionButtonText}>
-                          {activeTaskId === task.id && activeTaskAction === "complete"
-                            ? "Completing..."
-                            : activeTaskId === task.id && activeTaskAction === "reopen"
-                              ? "Reopening..."
-                              : task.status === "completed"
-                                ? "Reopen"
-                                : "Complete"}
-                        </Text>
-                      </Pressable>
-
-                      <Pressable
-                        style={[
-                          styles.taskActionButton,
-                          styles.deleteButton,
-                          activeTaskId === task.id ? styles.buttonDisabled : null,
-                        ]}
-                        onPress={() => void handleDeleteTask(task.id)}
-                        disabled={activeTaskId === task.id}
-                      >
-                        <Text style={[styles.taskActionButtonText, styles.deleteButtonText]}>
-                          {activeTaskId === task.id && activeTaskAction === "delete"
-                            ? "Deleting..."
-                            : "Delete"}
-                        </Text>
-                      </Pressable>
-                    </View>
-                  </View>
-                ))}
-              </View>
-            ) : null}
-          </View>
         </ScrollView>
       </SafeAreaView>
     </SafeAreaProvider>
@@ -342,6 +470,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#E8C994",
     gap: 14,
+  },
+  modeActions: {
+    flexDirection: "row",
+    gap: 10,
+    alignItems: "center",
   },
   cardEyebrow: {
     color: "#B45A36",
@@ -409,6 +542,12 @@ const styles = StyleSheet.create({
     color: "#FFF8EE",
     fontSize: 13,
     fontWeight: "700",
+  },
+  signOutButton: {
+    backgroundColor: "#F6DED3",
+  },
+  signOutButtonText: {
+    color: "#7F2E14",
   },
   buttonDisabled: {
     opacity: 0.7,

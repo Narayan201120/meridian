@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     api_v1_prefix: str = "/api/v1"
     database_url: str | None = None
     database_echo: bool = False
+    supabase_url: str | None = None
+    supabase_jwt_audience: str = "authenticated"
     cors_origins: Annotated[list[str], NoDecode] = [
         "http://localhost:8081",
         "http://127.0.0.1:8081",
@@ -32,6 +34,21 @@ class Settings(BaseSettings):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
 
         return value
+
+    @property
+    def supabase_jwt_issuer(self) -> str | None:
+        if self.supabase_url is None:
+            return None
+
+        return f"{self.supabase_url.rstrip('/')}/auth/v1"
+
+    @property
+    def supabase_jwks_url(self) -> str | None:
+        issuer = self.supabase_jwt_issuer
+        if issuer is None:
+            return None
+
+        return f"{issuer}/.well-known/jwks.json"
 
 
 @lru_cache

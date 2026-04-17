@@ -1,5 +1,7 @@
 import { Platform } from "react-native";
 
+import { authRuntime, getAccessToken } from "./auth";
+
 export type TaskStatus = "inbox" | "scheduled" | "completed" | "archived";
 export type TaskPriority = "low" | "medium" | "high";
 
@@ -28,26 +30,16 @@ export type UpdateTaskInput = Partial<{
   priority: TaskPriority;
 }>;
 
-type RuntimeShape = typeof globalThis & {
-  process?: {
-    env?: Record<string, string | undefined>;
-  };
-};
-
-const runtimeEnv = (globalThis as RuntimeShape).process?.env ?? {};
-
 const defaultApiBaseUrl = Platform.select({
   android: "http://10.0.2.2:8000/api/v1",
   default: "http://localhost:8000/api/v1",
 });
 
-const apiBaseUrl = runtimeEnv.EXPO_PUBLIC_API_BASE_URL ?? defaultApiBaseUrl ?? "http://localhost:8000/api/v1";
-const devUserId = runtimeEnv.EXPO_PUBLIC_DEV_USER_ID ?? "";
+const apiBaseUrl = process.env.EXPO_PUBLIC_API_BASE_URL ?? defaultApiBaseUrl ?? "http://localhost:8000/api/v1";
 
 export const tasksRuntime = {
   apiBaseUrl,
-  devUserId,
-  isApiMode: devUserId.length > 0,
+  isApiMode: authRuntime.isConfigured,
 };
 
 let demoTasks: Task[] = [
@@ -102,15 +94,26 @@ async function readErrorDetail(response: Response): Promise<string> {
   }
 }
 
+function buildApiHeaders(contentType?: string): HeadersInit {
+  const accessToken = getAccessToken();
+
+  if (accessToken === null) {
+    throw new Error("Sign in to access live tasks.");
+  }
+
+  return {
+    ...(contentType ? { "Content-Type": contentType } : {}),
+    Authorization: `Bearer ${accessToken}`,
+  };
+}
+
 export async function listTasks(): Promise<Task[]> {
   if (!tasksRuntime.isApiMode) {
     return demoTasks;
   }
 
   const response = await fetch(`${tasksRuntime.apiBaseUrl}/tasks`, {
-    headers: {
-      "X-User-Id": tasksRuntime.devUserId,
-    },
+    headers: buildApiHeaders(),
   });
 
   if (!response.ok) {
@@ -150,10 +153,7 @@ export async function createTask(input: CreateTaskInput): Promise<Task> {
 
   const response = await fetch(`${tasksRuntime.apiBaseUrl}/tasks`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-User-Id": tasksRuntime.devUserId,
-    },
+    headers: buildApiHeaders("application/json"),
     body: JSON.stringify({
       title,
       notes,
@@ -191,10 +191,7 @@ export async function updateTask(taskId: string, input: UpdateTaskInput): Promis
 
   const response = await fetch(`${tasksRuntime.apiBaseUrl}/tasks/${taskId}`, {
     method: "PATCH",
-    headers: {
-      "Content-Type": "application/json",
-      "X-User-Id": tasksRuntime.devUserId,
-    },
+    headers: buildApiHeaders("application/json"),
     body: JSON.stringify(input),
   });
 
@@ -215,9 +212,7 @@ export async function deleteTask(taskId: string): Promise<void> {
 
   const response = await fetch(`${tasksRuntime.apiBaseUrl}/tasks/${taskId}`, {
     method: "DELETE",
-    headers: {
-      "X-User-Id": tasksRuntime.devUserId,
-    },
+    headers: buildApiHeaders(),
   });
 
   if (!response.ok) {
@@ -231,5 +226,5 @@ export function describeTaskError(error: unknown): string {
     return extractErrorMessage(error);
   }
 
-  return `${extractErrorMessage(error)}. Confirm the backend is running and EXPO_PUBLIC_DEV_USER_ID matches a real user UUID.`;
+  return `${extractErrorMessage(error)}. Confirm the backend is running and you are signed in with a valid Supabase session.`;
 }
