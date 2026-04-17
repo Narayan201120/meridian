@@ -21,6 +21,13 @@ export type CreateTaskInput = {
   notes?: string;
 };
 
+export type UpdateTaskInput = Partial<{
+  title: string;
+  notes: string | null;
+  status: TaskStatus;
+  priority: TaskPriority;
+}>;
+
 type RuntimeShape = typeof globalThis & {
   process?: {
     env?: Record<string, string | undefined>;
@@ -87,6 +94,14 @@ function extractErrorMessage(error: unknown): string {
   return "Unknown error";
 }
 
+async function readErrorDetail(response: Response): Promise<string> {
+  try {
+    return JSON.stringify(await response.json());
+  } catch {
+    return await response.text();
+  }
+}
+
 export async function listTasks(): Promise<Task[]> {
   if (!tasksRuntime.isApiMode) {
     return demoTasks;
@@ -146,19 +161,69 @@ export async function createTask(input: CreateTaskInput): Promise<Task> {
   });
 
   if (!response.ok) {
-    let detail = "";
-
-    try {
-      detail = JSON.stringify(await response.json());
-    } catch {
-      detail = await response.text();
-    }
+    const detail = await readErrorDetail(response);
 
     throw new Error(detail || `Failed to create task (${response.status})`);
   }
 
   const payload = (await response.json()) as Task;
   return normalizeTask(payload);
+}
+
+export async function updateTask(taskId: string, input: UpdateTaskInput): Promise<Task> {
+  if (!tasksRuntime.isApiMode) {
+    const existingTask = demoTasks.find((task) => task.id === taskId);
+
+    if (!existingTask) {
+      throw new Error("Task not found.");
+    }
+
+    const now = new Date().toISOString();
+    const nextTask = normalizeTask({
+      ...existingTask,
+      ...input,
+      updated_at: now,
+    });
+
+    demoTasks = demoTasks.map((task) => (task.id === taskId ? nextTask : task));
+    return nextTask;
+  }
+
+  const response = await fetch(`${tasksRuntime.apiBaseUrl}/tasks/${taskId}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      "X-User-Id": tasksRuntime.devUserId,
+    },
+    body: JSON.stringify(input),
+  });
+
+  if (!response.ok) {
+    const detail = await readErrorDetail(response);
+    throw new Error(detail || `Failed to update task (${response.status})`);
+  }
+
+  const payload = (await response.json()) as Task;
+  return normalizeTask(payload);
+}
+
+export async function deleteTask(taskId: string): Promise<void> {
+  if (!tasksRuntime.isApiMode) {
+    demoTasks = demoTasks.filter((task) => task.id !== taskId);
+    return;
+  }
+
+  const response = await fetch(`${tasksRuntime.apiBaseUrl}/tasks/${taskId}`, {
+    method: "DELETE",
+    headers: {
+      "X-User-Id": tasksRuntime.devUserId,
+    },
+  });
+
+  if (!response.ok) {
+    const detail = await readErrorDetail(response);
+    throw new Error(detail || `Failed to delete task (${response.status})`);
+  }
 }
 
 export function describeTaskError(error: unknown): string {

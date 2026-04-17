@@ -11,7 +11,15 @@ import {
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 
-import { createTask, describeTaskError, listTasks, tasksRuntime, type Task } from "./src/lib/tasks";
+import {
+  createTask,
+  deleteTask,
+  describeTaskError,
+  listTasks,
+  tasksRuntime,
+  type Task,
+  updateTask,
+} from "./src/lib/tasks";
 
 export default function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -20,6 +28,10 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  const [activeTaskAction, setActiveTaskAction] = useState<"complete" | "reopen" | "delete" | null>(
+    null,
+  );
 
   async function loadTasks() {
     setIsLoading(true);
@@ -39,6 +51,12 @@ export default function App() {
     void loadTasks();
   }, []);
 
+  function replaceTask(nextTask: Task) {
+    setTasks((currentTasks) =>
+      currentTasks.map((task) => (task.id === nextTask.id ? nextTask : task)),
+    );
+  }
+
   async function handleCreateTask() {
     if (!title.trim()) {
       setErrorMessage("Give the task a title before adding it.");
@@ -57,6 +75,41 @@ export default function App() {
       setErrorMessage(describeTaskError(error));
     } finally {
       setIsSubmitting(false);
+    }
+  }
+
+  async function handleToggleTaskStatus(task: Task) {
+    const nextStatus = task.status === "completed" ? "inbox" : "completed";
+    const nextAction = task.status === "completed" ? "reopen" : "complete";
+
+    setActiveTaskId(task.id);
+    setActiveTaskAction(nextAction);
+    setErrorMessage(null);
+
+    try {
+      const nextTask = await updateTask(task.id, { status: nextStatus });
+      replaceTask(nextTask);
+    } catch (error) {
+      setErrorMessage(describeTaskError(error));
+    } finally {
+      setActiveTaskId(null);
+      setActiveTaskAction(null);
+    }
+  }
+
+  async function handleDeleteTask(taskId: string) {
+    setActiveTaskId(taskId);
+    setActiveTaskAction("delete");
+    setErrorMessage(null);
+
+    try {
+      await deleteTask(taskId);
+      setTasks((currentTasks) => currentTasks.filter((task) => task.id !== taskId));
+    } catch (error) {
+      setErrorMessage(describeTaskError(error));
+    } finally {
+      setActiveTaskId(null);
+      setActiveTaskAction(null);
     }
   }
 
@@ -162,7 +215,12 @@ export default function App() {
                   <View key={task.id} style={styles.taskCard}>
                     <View style={styles.taskHeader}>
                       <Text style={styles.taskTitle}>{task.title}</Text>
-                      <View style={styles.badge}>
+                      <View
+                        style={[
+                          styles.badge,
+                          task.status === "completed" ? styles.completedBadge : null,
+                        ]}
+                      >
                         <Text style={styles.badgeText}>{task.status}</Text>
                       </View>
                     </View>
@@ -176,6 +234,43 @@ export default function App() {
                           ? `${task.estimated_duration_minutes} min`
                           : "No estimate"}
                       </Text>
+                    </View>
+
+                    <View style={styles.taskActionsRow}>
+                      <Pressable
+                        style={[
+                          styles.taskActionButton,
+                          activeTaskId === task.id ? styles.buttonDisabled : null,
+                        ]}
+                        onPress={() => void handleToggleTaskStatus(task)}
+                        disabled={activeTaskId === task.id}
+                      >
+                        <Text style={styles.taskActionButtonText}>
+                          {activeTaskId === task.id && activeTaskAction === "complete"
+                            ? "Completing..."
+                            : activeTaskId === task.id && activeTaskAction === "reopen"
+                              ? "Reopening..."
+                              : task.status === "completed"
+                                ? "Reopen"
+                                : "Complete"}
+                        </Text>
+                      </Pressable>
+
+                      <Pressable
+                        style={[
+                          styles.taskActionButton,
+                          styles.deleteButton,
+                          activeTaskId === task.id ? styles.buttonDisabled : null,
+                        ]}
+                        onPress={() => void handleDeleteTask(task.id)}
+                        disabled={activeTaskId === task.id}
+                      >
+                        <Text style={[styles.taskActionButtonText, styles.deleteButtonText]}>
+                          {activeTaskId === task.id && activeTaskAction === "delete"
+                            ? "Deleting..."
+                            : "Delete"}
+                        </Text>
+                      </Pressable>
                     </View>
                   </View>
                 ))}
@@ -399,6 +494,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
   },
+  completedBadge: {
+    backgroundColor: "#D7E1EF",
+  },
   badgeText: {
     color: "#204636",
     fontSize: 11,
@@ -419,5 +517,27 @@ const styles = StyleSheet.create({
     color: "#6A6258",
     fontSize: 12,
     fontWeight: "600",
+  },
+  taskActionsRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 4,
+  },
+  taskActionButton: {
+    borderRadius: 999,
+    backgroundColor: "#132A24",
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  taskActionButtonText: {
+    color: "#FFF8EE",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  deleteButton: {
+    backgroundColor: "#F6DED3",
+  },
+  deleteButtonText: {
+    color: "#7F2E14",
   },
 });
