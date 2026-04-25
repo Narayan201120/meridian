@@ -1,13 +1,13 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from enum import StrEnum
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import DateTime, Enum as SqlEnum, Integer, Numeric, String, Text, text
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.db.base import Base
+from app.db.base import Base, JSONB_or_JSON
 
 
 def _enum_values(enum_cls: type[StrEnum]) -> list[str]:
@@ -39,12 +39,17 @@ class ScheduleIntent(StrEnum):
     USER_REQUESTED_BLOCK = "user_requested_block"
 
 
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 class Task(Base):
     __tablename__ = "tasks"
 
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         primary_key=True,
+        default=uuid4,
         server_default=text("gen_random_uuid()"),
     )
     user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
@@ -102,10 +107,9 @@ class Task(Base):
     )
     parsing_confidence: Mapped[Decimal | None] = mapped_column(Numeric(5, 4))
     ai_metadata: Mapped[dict] = mapped_column(
-        JSONB,
+        JSONB_or_JSON,
         nullable=False,
         default=dict,
-        server_default=text("'{}'::jsonb"),
     )
     client_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -114,10 +118,12 @@ class Task(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
-        server_default=text("now()"),
+        default=_utcnow,
+        server_default=text("CURRENT_TIMESTAMP"),
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
-        server_default=text("now()"),
+        default=_utcnow,
+        server_default=text("CURRENT_TIMESTAMP"),
     )

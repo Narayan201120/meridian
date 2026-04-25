@@ -49,6 +49,9 @@ class TaskRepository:
     async def save(self) -> None:
         await self.session.commit()
 
+    async def flush(self) -> None:
+        await self.session.flush()
+
     async def refresh(self, task: Task) -> Task:
         await self.session.refresh(task)
         return task

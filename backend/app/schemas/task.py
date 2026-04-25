@@ -26,6 +26,8 @@ class TaskCreate(BaseModel):
     schedule_intent: ScheduleIntent = ScheduleIntent.NONE
     ai_metadata: dict[str, Any] = Field(default_factory=dict)
     client_created_at: datetime | None = None
+    client_mutation_id: UUID | None = None
+    source_device_id: UUID | None = None
 
     @field_validator("title")
     @classmethod
@@ -50,6 +52,8 @@ class TaskUpdate(BaseModel):
     estimated_duration_minutes: int | None = Field(default=None, gt=0)
     schedule_intent: ScheduleIntent | None = None
     ai_metadata: dict[str, Any] | None = None
+    client_mutation_id: UUID | None = None
+    source_device_id: UUID | None = None
 
     @field_validator("title")
     @classmethod
@@ -88,4 +92,3 @@ class TaskRead(BaseModel):
     archived_at: datetime | None
     created_at: datetime
     updated_at: datetime
-
