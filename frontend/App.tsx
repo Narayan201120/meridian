@@ -141,6 +141,8 @@ export default function App() {
   const [authPassword, setAuthPassword] = useState("");
   const [title, setTitle] = useState("");
   const [notes, setNotes] = useState("");
+  const [draftPriority, setDraftPriority] = useState<Task["priority"]>("medium");
+  const [draftDuration, setDraftDuration] = useState("");
   const [scheduledForInput, setScheduledForInput] = useState("");
   const [draftStatus, setDraftStatus] = useState<Extract<Task["status"], "inbox" | "scheduled">>(
     "inbox",
@@ -155,13 +157,20 @@ export default function App() {
   const [activeTaskFilter, setActiveTaskFilter] = useState<TaskListFilter>("all");
   const [scheduleEditorTaskId, setScheduleEditorTaskId] = useState<string | null>(null);
   const [scheduleEditorValue, setScheduleEditorValue] = useState("");
+  const [taskEditorTaskId, setTaskEditorTaskId] = useState<string | null>(null);
+  const [taskEditorTitle, setTaskEditorTitle] = useState("");
+  const [taskEditorNotes, setTaskEditorNotes] = useState("");
+  const [taskEditorPriority, setTaskEditorPriority] = useState<Task["priority"]>("medium");
+  const [taskEditorDuration, setTaskEditorDuration] = useState("");
   const [activeTaskAction, setActiveTaskAction] = useState<
-    "complete" | "reopen" | "delete" | "schedule" | "unschedule" | null
+    "complete" | "reopen" | "delete" | "schedule" | "unschedule" | "edit" | null
   >(null);
 
-  async function loadTasks() {
-    setIsLoading(true);
-    setErrorMessage(null);
+  async function loadTasks({ silent = false }: { silent?: boolean } = {}) {
+    if (!silent) {
+      setIsLoading(true);
+      setErrorMessage(null);
+    }
 
     try {
       const nextTasks = await listTasks();
@@ -175,9 +184,13 @@ export default function App() {
       );
       setTasks(nextTasks);
     } catch (error) {
-      setErrorMessage(describeTaskError(error));
+      if (!silent) {
+        setErrorMessage(describeTaskError(error));
+      }
     } finally {
-      setIsLoading(false);
+      if (!silent) {
+        setIsLoading(false);
+      }
     }
   }
 
@@ -191,6 +204,18 @@ export default function App() {
     void loadTasks();
   }, [authSession]);
 
+  useEffect(() => {
+    if (!tasksRuntime.isApiMode || authSession === null) {
+      return;
+    }
+
+    const intervalId = setInterval(() => {
+      void loadTasks({ silent: true });
+    }, 30_000);
+
+    return () => clearInterval(intervalId);
+  }, [authSession]);
+
   function replaceTask(nextTask: Task) {
     setTasks((currentTasks) =>
       currentTasks.map((task) => (task.id === nextTask.id ? nextTask : task)),
@@ -200,6 +225,17 @@ export default function App() {
   async function handleCreateTask() {
     if (!title.trim()) {
       setErrorMessage("Give the task a title before adding it.");
+      return;
+    }
+
+    const durationInput = draftDuration.trim();
+    const estimatedDuration = durationInput ? Number(durationInput) : null;
+
+    if (
+      estimatedDuration !== null &&
+      (!Number.isInteger(estimatedDuration) || estimatedDuration <= 0 || estimatedDuration > 1_440)
+    ) {
+      setErrorMessage("Estimated duration must be a whole number between 1 and 1440 minutes.");
       return;
     }
 
@@ -223,13 +259,22 @@ export default function App() {
     setErrorMessage(null);
 
     try {
-      const nextTask = await createTask({ title, notes, status: draftStatus, due_at: dueAt });
+      const nextTask = await createTask({
+        title,
+        notes,
+        status: draftStatus,
+        priority: draftPriority,
+        due_at: dueAt,
+        estimated_duration_minutes: estimatedDuration,
+      });
       setTasks((currentTasks) => [nextTask, ...currentTasks]);
       if (activeTaskFilter !== "all" && activeTaskFilter !== nextTask.status) {
         setActiveTaskFilter(nextTask.status);
       }
       setTitle("");
       setNotes("");
+      setDraftPriority("medium");
+      setDraftDuration("");
       setScheduledForInput("");
       setDraftStatus("inbox");
     } catch (error) {
@@ -309,6 +354,62 @@ export default function App() {
     }
   }
 
+  function handleOpenTaskEditor(task: Task) {
+    setTaskEditorTaskId(task.id);
+    setTaskEditorTitle(task.title);
+    setTaskEditorNotes(task.notes ?? "");
+    setTaskEditorPriority(task.priority);
+    setTaskEditorDuration(task.estimated_duration_minutes?.toString() ?? "");
+    setErrorMessage(null);
+  }
+
+  function closeTaskEditor() {
+    setTaskEditorTaskId(null);
+    setTaskEditorTitle("");
+    setTaskEditorNotes("");
+    setTaskEditorPriority("medium");
+    setTaskEditorDuration("");
+  }
+
+  async function handleSaveTaskDetails(task: Task) {
+    const nextTitle = taskEditorTitle.trim();
+    const durationInput = taskEditorDuration.trim();
+    const estimatedDuration = durationInput ? Number(durationInput) : null;
+
+    if (!nextTitle) {
+      setErrorMessage("Give the task a title before saving it.");
+      return;
+    }
+
+    if (
+      estimatedDuration !== null &&
+      (!Number.isInteger(estimatedDuration) || estimatedDuration <= 0 || estimatedDuration > 1_440)
+    ) {
+      setErrorMessage("Estimated duration must be a whole number between 1 and 1440 minutes.");
+      return;
+    }
+
+    setActiveTaskId(task.id);
+    setActiveTaskAction("edit");
+    setErrorMessage(null);
+
+    try {
+      const nextTask = await updateTask(task.id, {
+        title: nextTitle,
+        notes: taskEditorNotes.trim() || null,
+        priority: taskEditorPriority,
+        estimated_duration_minutes: estimatedDuration,
+      });
+      replaceTask(nextTask);
+      closeTaskEditor();
+    } catch (error) {
+      setErrorMessage(describeTaskError(error));
+    } finally {
+      setActiveTaskId(null);
+      setActiveTaskAction(null);
+    }
+  }
+
   function handleOpenScheduleEditor(task: Task) {
     setScheduleEditorTaskId(task.id);
     setScheduleEditorValue(formatDateTimeInputValue(task.due_at));
@@ -374,6 +475,7 @@ export default function App() {
   function renderTaskCard(task: Task) {
     const isBusy = activeTaskId === task.id;
     const isEditingSchedule = scheduleEditorTaskId === task.id;
+    const isEditingTask = taskEditorTaskId === task.id;
 
     return (
       <View key={task.id} style={styles.taskCard}>
@@ -408,7 +510,66 @@ export default function App() {
           </View>
         </View>
 
-        {task.notes ? <Text style={styles.taskNotes}>{task.notes}</Text> : null}
+        {isEditingTask ? (
+          <View style={styles.scheduleEditor}>
+            <Text style={styles.scheduleEditorLabel}>Task details</Text>
+            <TextInput
+              placeholder="Task title"
+              placeholderTextColor="#7D7A70"
+              style={styles.input}
+              value={taskEditorTitle}
+              onChangeText={setTaskEditorTitle}
+            />
+            <TextInput
+              placeholder="Notes (optional)"
+              placeholderTextColor="#7D7A70"
+              style={[styles.input, styles.notesInput]}
+              value={taskEditorNotes}
+              onChangeText={setTaskEditorNotes}
+              multiline
+            />
+            <TextInput
+              placeholder="Estimated duration in minutes (optional)"
+              placeholderTextColor="#7D7A70"
+              style={styles.input}
+              value={taskEditorDuration}
+              onChangeText={setTaskEditorDuration}
+              keyboardType="number-pad"
+            />
+            <View style={styles.filterRow}>
+              {(["low", "medium", "high"] as const).map((priority) => {
+                const isSelected = taskEditorPriority === priority;
+                return (
+                  <Pressable
+                    key={priority}
+                    style={[styles.filterChip, isSelected ? styles.filterChipActive : null]}
+                    onPress={() => setTaskEditorPriority(priority)}
+                  >
+                    <Text style={[styles.filterChipText, isSelected ? styles.filterChipTextActive : null]}>
+                      {priority}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <View style={styles.taskActionsRow}>
+              <Pressable
+                style={[styles.taskActionButton, isBusy ? styles.buttonDisabled : null]}
+                onPress={() => void handleSaveTaskDetails(task)}
+                disabled={isBusy}
+              >
+                <Text style={styles.taskActionButtonText}>
+                  {isBusy && activeTaskAction === "edit" ? "Saving..." : "Save details"}
+                </Text>
+              </Pressable>
+              <Pressable style={[styles.taskActionButton, styles.secondaryTaskButton]} onPress={closeTaskEditor}>
+                <Text style={[styles.taskActionButtonText, styles.secondaryTaskButtonText]}>Cancel</Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : task.notes ? (
+          <Text style={styles.taskNotes}>{task.notes}</Text>
+        ) : null}
 
         <View style={styles.metaRow}>
           <Text style={styles.metaText}>Priority: {task.priority}</Text>
@@ -437,6 +598,30 @@ export default function App() {
               onChangeText={setScheduleEditorValue}
               autoCapitalize="none"
             />
+            <TextInput
+              placeholder="Estimated duration in minutes (optional)"
+              placeholderTextColor="#7D7A70"
+              style={styles.input}
+              value={taskEditorDuration}
+              onChangeText={setTaskEditorDuration}
+              keyboardType="number-pad"
+            />
+            <View style={styles.filterRow}>
+              {(["low", "medium", "high"] as const).map((priority) => {
+                const isSelected = taskEditorPriority === priority;
+                return (
+                  <Pressable
+                    key={priority}
+                    style={[styles.filterChip, isSelected ? styles.filterChipActive : null]}
+                    onPress={() => setTaskEditorPriority(priority)}
+                  >
+                    <Text style={[styles.filterChipText, isSelected ? styles.filterChipTextActive : null]}>
+                      {priority}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
             <View style={styles.taskActionsRow}>
               <Pressable
                 style={[
@@ -468,7 +653,17 @@ export default function App() {
         ) : null}
 
         <View style={styles.taskActionsRow}>
-          {task.status !== "completed" && !isEditingSchedule ? (
+          {!isEditingTask && !isEditingSchedule ? (
+            <Pressable
+              style={[styles.taskActionButton, styles.secondaryTaskButton, isBusy ? styles.buttonDisabled : null]}
+              onPress={() => handleOpenTaskEditor(task)}
+              disabled={isBusy}
+            >
+              <Text style={[styles.taskActionButtonText, styles.secondaryTaskButtonText]}>Edit</Text>
+            </Pressable>
+          ) : null}
+
+          {task.status !== "completed" && !isEditingSchedule && !isEditingTask ? (
             <Pressable
               style={[
                 styles.taskActionButton,
@@ -484,7 +679,7 @@ export default function App() {
             </Pressable>
           ) : null}
 
-          {(task.status === "scheduled" || task.status === "due_now") && !isEditingSchedule ? (
+          {(task.status === "scheduled" || task.status === "due_now") && !isEditingSchedule && !isEditingTask ? (
             <Pressable
               style={[
                 styles.taskActionButton,
@@ -685,6 +880,30 @@ export default function App() {
                   onChangeText={setNotes}
                   multiline
                 />
+                <TextInput
+                  placeholder="Estimated duration in minutes (optional)"
+                  placeholderTextColor="#7D7A70"
+                  style={styles.input}
+                  value={draftDuration}
+                  onChangeText={setDraftDuration}
+                  keyboardType="number-pad"
+                />
+                <View style={styles.filterRow}>
+                  {(["low", "medium", "high"] as const).map((priority) => {
+                    const isSelected = draftPriority === priority;
+                    return (
+                      <Pressable
+                        key={priority}
+                        style={[styles.filterChip, isSelected ? styles.filterChipActive : null]}
+                        onPress={() => setDraftPriority(priority)}
+                      >
+                        <Text style={[styles.filterChipText, isSelected ? styles.filterChipTextActive : null]}>
+                          {priority}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
                 {draftStatus === "scheduled" ? (
                   <TextInput
                     placeholder="Schedule time: YYYY-MM-DDTHH:MM"

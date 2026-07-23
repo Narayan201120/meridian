@@ -22,7 +22,9 @@ export type CreateTaskInput = {
   title: string;
   notes?: string;
   status?: Extract<TaskStatus, "inbox" | "scheduled">;
+  priority?: TaskPriority;
   due_at?: string | null;
+  estimated_duration_minutes?: number | null;
 };
 
 export type UpdateTaskInput = Partial<{
@@ -31,6 +33,7 @@ export type UpdateTaskInput = Partial<{
   status: TaskStatus;
   priority: TaskPriority;
   due_at: string | null;
+  estimated_duration_minutes: number | null;
 }>;
 
 const defaultApiBaseUrl = Platform.select({
@@ -143,7 +146,9 @@ export async function createTask(input: CreateTaskInput): Promise<Task> {
   const title = input.title.trim();
   const notes = input.notes?.trim() || null;
   const status = input.status ?? "inbox";
+  const priority = input.priority ?? "medium";
   const dueAt = input.due_at ?? null;
+  const estimatedDuration = input.estimated_duration_minutes ?? null;
 
   if (!title) {
     throw new Error("Task title cannot be blank.");
@@ -157,9 +162,9 @@ export async function createTask(input: CreateTaskInput): Promise<Task> {
       title,
       notes,
       status,
-      priority: "medium",
+      priority,
       due_at: dueAt,
-      estimated_duration_minutes: null,
+      estimated_duration_minutes: estimatedDuration,
       created_at: now,
       updated_at: now,
     };
@@ -175,7 +180,9 @@ export async function createTask(input: CreateTaskInput): Promise<Task> {
       title,
       notes,
       status,
+      priority,
       due_at: dueAt,
+      estimated_duration_minutes: estimatedDuration,
     }),
   });
 
