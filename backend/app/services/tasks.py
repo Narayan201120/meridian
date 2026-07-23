@@ -27,6 +27,7 @@ class TaskService:
         limit: int,
         offset: int,
     ) -> list[Task]:
+        await self._activate_due_tasks(user_id)
         return await self.repository.list_for_user(
             user_id=user_id,
             status_filter=status_filter,
@@ -50,7 +51,7 @@ class TaskService:
             ai_metadata=payload.ai_metadata,
             client_created_at=payload.client_created_at,
         )
-        self._apply_status_side_effects(task, payload.status)
+        self._apply_status_rules(task)
         await self.repository.add(task)
         await self.repository.flush()
 
@@ -77,6 +78,7 @@ class TaskService:
         return await self.repository.refresh(task)
 
     async def get_task(self, *, user_id: UUID, task_id: UUID) -> Task:
+        await self._activate_due_tasks(user_id)
         task = await self.repository.get_for_user(user_id=user_id, task_id=task_id)
         if task is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found.")
@@ -97,8 +99,8 @@ class TaskService:
             mutation_payload_fields[field_name] = {"old": self._serialize_value(old_value), "new": self._serialize_value(value)}
             setattr(task, field_name, value)
 
-        if "status" in updates and task.status is not None:
-            self._apply_status_side_effects(task, task.status)
+        if "status" in updates or "due_at" in updates:
+            self._apply_status_rules(task)
 
         await self.repository.flush()
 
@@ -136,6 +138,20 @@ class TaskService:
 
         await self.session.commit()
 
+    def _apply_status_rules(self, task: Task) -> None:
+        now = self._utcnow()
+
+        if task.status == TaskStatus.SCHEDULED:
+            if task.due_at is None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Scheduled tasks require a scheduled time.",
+                )
+            if task.due_at <= now:
+                task.status = TaskStatus.DUE_NOW
+
+        self._apply_status_side_effects(task, task.status)
+
     def _apply_status_side_effects(self, task: Task, status_value: TaskStatus) -> None:
         now = self._utcnow()
 
@@ -153,6 +169,32 @@ class TaskService:
         task.archived_at = None
         if status_value != TaskStatus.COMPLETED:
             task.completed_at = None
+
+    async def _activate_due_tasks(self, user_id: UUID) -> None:
+        due_tasks = await self.repository.list_due_for_activation(
+            user_id=user_id,
+            due_before=self._utcnow(),
+        )
+
+        if not due_tasks:
+            return
+
+        for task in due_tasks:
+            task.status = TaskStatus.DUE_NOW
+            self._apply_status_side_effects(task, task.status)
+            await self._write_mutation_log(
+                user_id=user_id,
+                task_id=task.id,
+                mutation_kind=MutationKind.UPDATE,
+                client_mutation_id=uuid4(),
+                source_device_id=None,
+                mutation_payload={
+                    "status": {"old": TaskStatus.SCHEDULED.value, "new": TaskStatus.DUE_NOW.value},
+                    "activated_at": self._utcnow().isoformat(),
+                },
+            )
+
+        await self.session.commit()
 
     async def _write_mutation_log(
         self,

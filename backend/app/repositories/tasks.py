@@ -1,3 +1,4 @@
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import Select, select
@@ -41,6 +42,19 @@ class TaskRepository:
         result = await self.session.scalars(stmt)
         return result.one_or_none()
 
+    async def list_due_for_activation(self, *, user_id: UUID, due_before: datetime) -> list[Task]:
+        stmt = (
+            self._base_query(user_id)
+            .where(
+                Task.status == TaskStatus.SCHEDULED,
+                Task.due_at.is_not(None),
+                Task.due_at <= due_before,
+            )
+            .order_by(Task.due_at.asc())
+        )
+        result = await self.session.scalars(stmt)
+        return list(result.all())
+
     async def add(self, task: Task) -> Task:
         self.session.add(task)
         await self.session.flush()
@@ -55,4 +69,3 @@ class TaskRepository:
     async def refresh(self, task: Task) -> Task:
         await self.session.refresh(task)
         return task
-

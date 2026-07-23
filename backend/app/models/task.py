@@ -17,6 +17,7 @@ def _enum_values(enum_cls: type[StrEnum]) -> list[str]:
 class TaskStatus(StrEnum):
     INBOX = "inbox"
     SCHEDULED = "scheduled"
+    DUE_NOW = "due_now"
     COMPLETED = "completed"
     ARCHIVED = "archived"
 

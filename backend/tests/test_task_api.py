@@ -1,12 +1,19 @@
+from datetime import datetime, timedelta, timezone
+from uuid import UUID
+
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
-from uuid import UUID
 
+from app.models.task import Task
 from app.models.task_mutation_log import MutationKind, TaskMutationLog
 
 
 pytestmark = pytest.mark.asyncio
+
+
+def utc_iso(*, hours: int = 0, minutes: int = 0) -> str:
+    return (datetime.now(timezone.utc) + timedelta(hours=hours, minutes=minutes)).isoformat()
 
 
 async def test_create_task(client: AsyncClient) -> None:
@@ -48,6 +55,34 @@ async def test_create_task_with_mutation_id(client: AsyncClient) -> None:
     assert data["title"] == "Schedule kickoff call"
 
 
+async def test_create_scheduled_task_requires_due_at(client: AsyncClient) -> None:
+    response = await client.post(
+        "/api/v1/tasks",
+        json={
+            "title": "Show up later",
+            "status": "scheduled",
+        },
+    )
+
+    assert response.status_code == 422
+
+
+async def test_create_scheduled_task_with_future_due_at(client: AsyncClient) -> None:
+    response = await client.post(
+        "/api/v1/tasks",
+        json={
+            "title": "Deep work block",
+            "status": "scheduled",
+            "due_at": utc_iso(hours=2),
+        },
+    )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["status"] == "scheduled"
+    assert data["due_at"] is not None
+
+
 async def test_create_task_rejects_blank_title(client: AsyncClient) -> None:
     response = await client.post(
         "/api/v1/tasks",
@@ -81,6 +116,30 @@ async def test_list_tasks_by_status(client: AsyncClient) -> None:
     response = await client.get("/api/v1/tasks", params={"status": "inbox"})
     data = response.json()
     assert all(t["status"] == "inbox" for t in data)
+
+
+async def test_list_tasks_activates_overdue_scheduled_tasks(client: AsyncClient, db_session) -> None:
+    create_r = await client.post(
+        "/api/v1/tasks",
+        json={
+            "title": "Due task",
+            "status": "scheduled",
+            "due_at": utc_iso(hours=1),
+        },
+    )
+    task_id = UUID(create_r.json()["id"])
+
+    task = await db_session.get(Task, task_id)
+    assert task is not None
+    task.due_at = datetime.now(timezone.utc) - timedelta(minutes=5)
+    await db_session.commit()
+
+    response = await client.get("/api/v1/tasks")
+
+    assert response.status_code == 200
+    data = response.json()
+    due_task = next(task for task in data if task["id"] == str(task_id))
+    assert due_task["status"] == "due_now"
 
 
 async def test_get_task(client: AsyncClient) -> None:

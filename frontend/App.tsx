@@ -28,6 +28,112 @@ import {
   updateTask,
 } from "./src/lib/tasks";
 
+type TaskListFilter = "all" | Task["status"];
+
+const taskFilters: Array<{ key: TaskListFilter; label: string }> = [
+  { key: "all", label: "All" },
+  { key: "inbox", label: "Inbox" },
+  { key: "due_now", label: "Due now" },
+  { key: "scheduled", label: "Scheduled" },
+  { key: "completed", label: "Completed" },
+];
+
+function getTaskFilterCount(tasks: Task[], filter: TaskListFilter) {
+  if (filter === "all") {
+    return tasks.length;
+  }
+
+  return tasks.filter((task) => task.status === filter).length;
+}
+
+function getTaskGroups(tasks: Task[], activeFilter: TaskListFilter) {
+  const baseGroups = [
+    {
+      key: "inbox" as const,
+      label: "Inbox",
+      emptyTitle: "Inbox is clear",
+      emptyBody: "New tasks and reopened work will land here first.",
+    },
+    {
+      key: "due_now" as const,
+      label: "Due now",
+      emptyTitle: "Nothing is due right now",
+      emptyBody: "When scheduled work activates, it moves here and asks for attention.",
+    },
+    {
+      key: "scheduled" as const,
+      label: "Scheduled",
+      emptyTitle: "Nothing is scheduled",
+      emptyBody: "This is where calendar-aware work will show up next.",
+    },
+    {
+      key: "completed" as const,
+      label: "Completed",
+      emptyTitle: "Nothing completed yet",
+      emptyBody: "Completed work will stay visible here until you archive it.",
+    },
+  ];
+
+  if (activeFilter !== "all") {
+    return baseGroups
+      .filter((group) => group.key === activeFilter)
+      .map((group) => ({
+        ...group,
+        tasks: tasks.filter((task) => task.status === group.key),
+      }));
+  }
+
+  return baseGroups.map((group) => ({
+    ...group,
+    tasks: tasks.filter((task) => task.status === group.key),
+  }));
+}
+
+function formatDateTimeInputValue(value: string | null) {
+  if (!value) {
+    return "";
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "";
+  }
+
+  const local = new Date(parsed.getTime() - parsed.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+
+function parseDateTimeInputValue(value: string) {
+  const normalized = value.trim().replace(" ", "T");
+
+  if (!normalized) {
+    return null;
+  }
+
+  const parsed = new Date(normalized);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error("Enter a valid schedule time in YYYY-MM-DDTHH:MM format.");
+  }
+
+  return parsed.toISOString();
+}
+
+function formatTaskTime(value: string | null) {
+  if (!value) {
+    return "No time set";
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(parsed);
+}
+
 export default function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [authSession, setAuthSession] = useState<AuthSession | null>(() => getCurrentSession());
@@ -35,15 +141,23 @@ export default function App() {
   const [authPassword, setAuthPassword] = useState("");
   const [title, setTitle] = useState("");
   const [notes, setNotes] = useState("");
+  const [scheduledForInput, setScheduledForInput] = useState("");
+  const [draftStatus, setDraftStatus] = useState<Extract<Task["status"], "inbox" | "scheduled">>(
+    "inbox",
+  );
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [dueNotice, setDueNotice] = useState<string | null>(null);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
-  const [activeTaskAction, setActiveTaskAction] = useState<"complete" | "reopen" | "delete" | null>(
-    null,
-  );
+  const [activeTaskFilter, setActiveTaskFilter] = useState<TaskListFilter>("all");
+  const [scheduleEditorTaskId, setScheduleEditorTaskId] = useState<string | null>(null);
+  const [scheduleEditorValue, setScheduleEditorValue] = useState("");
+  const [activeTaskAction, setActiveTaskAction] = useState<
+    "complete" | "reopen" | "delete" | "schedule" | "unschedule" | null
+  >(null);
 
   async function loadTasks() {
     setIsLoading(true);
@@ -51,6 +165,14 @@ export default function App() {
 
     try {
       const nextTasks = await listTasks();
+      const dueNowCount = nextTasks.filter((task) => task.status === "due_now").length;
+      setDueNotice(
+        dueNowCount > 0
+          ? dueNowCount === 1
+            ? "1 task is due now."
+            : `${dueNowCount} tasks are due now.`
+          : null,
+      );
       setTasks(nextTasks);
     } catch (error) {
       setErrorMessage(describeTaskError(error));
@@ -81,14 +203,35 @@ export default function App() {
       return;
     }
 
+    let dueAt: string | null = null;
+
+    if (draftStatus === "scheduled") {
+      try {
+        dueAt = parseDateTimeInputValue(scheduledForInput);
+      } catch (error) {
+        setErrorMessage(describeTaskError(error));
+        return;
+      }
+
+      if (dueAt === null) {
+        setErrorMessage("Scheduled tasks need a date and time.");
+        return;
+      }
+    }
+
     setIsSubmitting(true);
     setErrorMessage(null);
 
     try {
-      const nextTask = await createTask({ title, notes });
+      const nextTask = await createTask({ title, notes, status: draftStatus, due_at: dueAt });
       setTasks((currentTasks) => [nextTask, ...currentTasks]);
+      if (activeTaskFilter !== "all" && activeTaskFilter !== nextTask.status) {
+        setActiveTaskFilter(nextTask.status);
+      }
       setTitle("");
       setNotes("");
+      setScheduledForInput("");
+      setDraftStatus("inbox");
     } catch (error) {
       setErrorMessage(describeTaskError(error));
     } finally {
@@ -166,6 +309,233 @@ export default function App() {
     }
   }
 
+  function handleOpenScheduleEditor(task: Task) {
+    setScheduleEditorTaskId(task.id);
+    setScheduleEditorValue(formatDateTimeInputValue(task.due_at));
+    setErrorMessage(null);
+  }
+
+  async function handleSaveSchedule(task: Task) {
+    let dueAt: string | null = null;
+
+    try {
+      dueAt = parseDateTimeInputValue(scheduleEditorValue);
+    } catch (error) {
+      setErrorMessage(describeTaskError(error));
+      return;
+    }
+
+    if (dueAt === null) {
+      setErrorMessage("Pick a date and time before scheduling the task.");
+      return;
+    }
+
+    setActiveTaskId(task.id);
+    setActiveTaskAction("schedule");
+    setErrorMessage(null);
+
+    try {
+      const nextTask = await updateTask(task.id, { status: "scheduled", due_at: dueAt });
+      replaceTask(nextTask);
+      if (activeTaskFilter !== "all" && activeTaskFilter !== nextTask.status) {
+        setActiveTaskFilter(nextTask.status);
+      }
+      setScheduleEditorTaskId(null);
+      setScheduleEditorValue("");
+    } catch (error) {
+      setErrorMessage(describeTaskError(error));
+    } finally {
+      setActiveTaskId(null);
+      setActiveTaskAction(null);
+    }
+  }
+
+  async function handleUnscheduleTask(task: Task) {
+    setActiveTaskId(task.id);
+    setActiveTaskAction("unschedule");
+    setErrorMessage(null);
+
+    try {
+      const nextTask = await updateTask(task.id, { status: "inbox", due_at: null });
+      replaceTask(nextTask);
+      if (activeTaskFilter !== "all" && activeTaskFilter !== nextTask.status) {
+        setActiveTaskFilter(nextTask.status);
+      }
+      setScheduleEditorTaskId(null);
+      setScheduleEditorValue("");
+    } catch (error) {
+      setErrorMessage(describeTaskError(error));
+    } finally {
+      setActiveTaskId(null);
+      setActiveTaskAction(null);
+    }
+  }
+
+  function renderTaskCard(task: Task) {
+    const isBusy = activeTaskId === task.id;
+    const isEditingSchedule = scheduleEditorTaskId === task.id;
+
+    return (
+      <View key={task.id} style={styles.taskCard}>
+        <View style={styles.taskHeader}>
+          <Text style={styles.taskTitle}>{task.title}</Text>
+          <View
+            style={[
+              styles.badge,
+              task.status === "completed"
+                ? styles.completedBadge
+                : task.status === "scheduled"
+                  ? styles.scheduledBadge
+                  : task.status === "due_now"
+                    ? styles.dueNowBadge
+                  : null,
+            ]}
+          >
+            <Text
+              style={[
+                styles.badgeText,
+                task.status === "completed"
+                  ? styles.completedBadgeText
+                  : task.status === "scheduled"
+                    ? styles.scheduledBadgeText
+                    : task.status === "due_now"
+                      ? styles.dueNowBadgeText
+                    : null,
+              ]}
+            >
+              {task.status}
+            </Text>
+          </View>
+        </View>
+
+        {task.notes ? <Text style={styles.taskNotes}>{task.notes}</Text> : null}
+
+        <View style={styles.metaRow}>
+          <Text style={styles.metaText}>Priority: {task.priority}</Text>
+          <Text style={styles.metaText}>
+            {task.estimated_duration_minutes
+              ? `${task.estimated_duration_minutes} min`
+              : "No estimate"}
+          </Text>
+        </View>
+
+        {task.status === "scheduled" || task.status === "due_now" ? (
+          <Text style={styles.scheduleMetaText}>
+            {task.status === "scheduled" ? "Scheduled for" : "Activated at"}:{" "}
+            {formatTaskTime(task.due_at)}
+          </Text>
+        ) : null}
+
+        {isEditingSchedule ? (
+          <View style={styles.scheduleEditor}>
+            <Text style={styles.scheduleEditorLabel}>Schedule time</Text>
+            <TextInput
+              placeholder="YYYY-MM-DDTHH:MM"
+              placeholderTextColor="#7D7A70"
+              style={styles.input}
+              value={scheduleEditorValue}
+              onChangeText={setScheduleEditorValue}
+              autoCapitalize="none"
+            />
+            <View style={styles.taskActionsRow}>
+              <Pressable
+                style={[
+                  styles.taskActionButton,
+                  styles.scheduleButton,
+                  isBusy ? styles.buttonDisabled : null,
+                ]}
+                onPress={() => void handleSaveSchedule(task)}
+                disabled={isBusy}
+              >
+                <Text style={[styles.taskActionButtonText, styles.scheduleButtonText]}>
+                  {isBusy && activeTaskAction === "schedule" ? "Saving..." : "Save schedule"}
+                </Text>
+              </Pressable>
+
+              <Pressable
+                style={[styles.taskActionButton, styles.secondaryTaskButton]}
+                onPress={() => {
+                  setScheduleEditorTaskId(null);
+                  setScheduleEditorValue("");
+                }}
+              >
+                <Text style={[styles.taskActionButtonText, styles.secondaryTaskButtonText]}>
+                  Cancel
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
+
+        <View style={styles.taskActionsRow}>
+          {task.status !== "completed" && !isEditingSchedule ? (
+            <Pressable
+              style={[
+                styles.taskActionButton,
+                styles.scheduleButton,
+                isBusy ? styles.buttonDisabled : null,
+              ]}
+              onPress={() => handleOpenScheduleEditor(task)}
+              disabled={isBusy}
+            >
+              <Text style={[styles.taskActionButtonText, styles.scheduleButtonText]}>
+                {task.status === "scheduled" ? "Reschedule" : task.status === "due_now" ? "Schedule again" : "Schedule"}
+              </Text>
+            </Pressable>
+          ) : null}
+
+          {(task.status === "scheduled" || task.status === "due_now") && !isEditingSchedule ? (
+            <Pressable
+              style={[
+                styles.taskActionButton,
+                styles.secondaryTaskButton,
+                isBusy ? styles.buttonDisabled : null,
+              ]}
+              onPress={() => void handleUnscheduleTask(task)}
+              disabled={isBusy}
+            >
+              <Text style={[styles.taskActionButtonText, styles.secondaryTaskButtonText]}>
+                {isBusy && activeTaskAction === "unschedule" ? "Moving..." : "Move to inbox"}
+              </Text>
+            </Pressable>
+          ) : null}
+
+          <Pressable
+            style={[styles.taskActionButton, isBusy ? styles.buttonDisabled : null]}
+            onPress={() => void handleToggleTaskStatus(task)}
+            disabled={isBusy}
+          >
+            <Text style={styles.taskActionButtonText}>
+              {isBusy && activeTaskAction === "complete"
+                ? "Completing..."
+                : isBusy && activeTaskAction === "reopen"
+                  ? "Reopening..."
+                  : task.status === "completed"
+                    ? "Reopen"
+                    : "Complete"}
+            </Text>
+          </Pressable>
+
+          <Pressable
+            style={[
+              styles.taskActionButton,
+              styles.deleteButton,
+              isBusy ? styles.buttonDisabled : null,
+            ]}
+            onPress={() => void handleDeleteTask(task.id)}
+            disabled={isBusy}
+          >
+            <Text style={[styles.taskActionButtonText, styles.deleteButtonText]}>
+              {isBusy && activeTaskAction === "delete" ? "Deleting..." : "Delete"}
+            </Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
+
+  const taskGroups = getTaskGroups(tasks, activeTaskFilter);
+
   return (
     <SafeAreaProvider>
       <SafeAreaView style={styles.safeArea}>
@@ -176,7 +546,7 @@ export default function App() {
             <Text style={styles.title}>Capture a task, then give it somewhere real to go.</Text>
             <Text style={styles.subtitle}>
               This is the first live task flow. In demo mode it runs locally. In API mode it talks
-              to the FastAPI backend with the temporary dev user header.
+              to the FastAPI backend with a real Supabase bearer token.
             </Text>
           </View>
 
@@ -231,7 +601,7 @@ export default function App() {
               <Text style={styles.sectionTitle}>Use your Supabase user</Text>
               <Text style={styles.sectionBody}>
                 Sign in with the local auth user you created in Supabase Studio so the task flow
-                uses a real bearer token instead of the old dev header.
+                uses the same bearer-token auth path the backend now enforces.
               </Text>
 
               <TextInput
@@ -268,8 +638,37 @@ export default function App() {
                 <Text style={styles.cardEyebrow}>Create task</Text>
                 <Text style={styles.sectionTitle}>Add something real</Text>
                 <Text style={styles.sectionBody}>
-                  Keep this first flow narrow: title, optional notes, then send it to the list.
+                  Keep this first flow narrow: title, optional notes, then decide whether it lands
+                  in inbox or scheduled work with a real activation time.
                 </Text>
+
+                <View style={styles.filterRow}>
+                  {[
+                    { key: "inbox", label: "Send to inbox" },
+                    { key: "scheduled", label: "Mark scheduled" },
+                  ].map((option) => {
+                    const isActive = draftStatus === option.key;
+
+                    return (
+                      <Pressable
+                        key={option.key}
+                        style={[styles.filterChip, isActive ? styles.filterChipActive : null]}
+                        onPress={() =>
+                          setDraftStatus(option.key as Extract<Task["status"], "inbox" | "scheduled">)
+                        }
+                      >
+                        <Text
+                          style={[
+                            styles.filterChipText,
+                            isActive ? styles.filterChipTextActive : null,
+                          ]}
+                        >
+                          {option.label}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
 
                 <TextInput
                   placeholder="Task title"
@@ -286,6 +685,16 @@ export default function App() {
                   onChangeText={setNotes}
                   multiline
                 />
+                {draftStatus === "scheduled" ? (
+                  <TextInput
+                    placeholder="Schedule time: YYYY-MM-DDTHH:MM"
+                    placeholderTextColor="#7D7A70"
+                    style={styles.input}
+                    value={scheduledForInput}
+                    onChangeText={setScheduledForInput}
+                    autoCapitalize="none"
+                  />
+                ) : null}
 
                 <Pressable
                   style={[styles.primaryButton, isSubmitting ? styles.buttonDisabled : null]}
@@ -293,7 +702,11 @@ export default function App() {
                   disabled={isSubmitting}
                 >
                   <Text style={styles.primaryButtonText}>
-                    {isSubmitting ? "Adding task..." : "Add task"}
+                    {isSubmitting
+                      ? "Adding task..."
+                      : draftStatus === "scheduled"
+                        ? "Add scheduled task"
+                        : "Add task"}
                   </Text>
                 </Pressable>
               </View>
@@ -305,12 +718,58 @@ export default function App() {
                 </View>
               ) : null}
 
+              {dueNotice ? (
+                <View style={styles.noticeCard}>
+                  <Text style={styles.noticeLabel}>Due now</Text>
+                  <Text style={styles.noticeText}>{dueNotice}</Text>
+                </View>
+              ) : null}
+
               <View style={styles.card}>
                 <Text style={styles.cardEyebrow}>Task list</Text>
-                <Text style={styles.sectionTitle}>Inbox</Text>
+                <Text style={styles.sectionTitle}>Shape the work</Text>
                 <Text style={styles.sectionBody}>
-                  The UI is now wired for the first real backend-aligned entity in the product.
+                  Meridian needs more than a raw list. Filter by task state, then work from a
+                  clearer execution view.
                 </Text>
+
+                <View style={styles.filterRow}>
+                  {taskFilters.map((filter) => {
+                    const isActive = activeTaskFilter === filter.key;
+
+                    return (
+                      <Pressable
+                        key={filter.key}
+                        style={[styles.filterChip, isActive ? styles.filterChipActive : null]}
+                        onPress={() => setActiveTaskFilter(filter.key)}
+                      >
+                        <Text
+                          style={[
+                            styles.filterChipText,
+                            isActive ? styles.filterChipTextActive : null,
+                          ]}
+                        >
+                          {filter.label}
+                        </Text>
+                        <View
+                          style={[
+                            styles.filterCountPill,
+                            isActive ? styles.filterCountPillActive : null,
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.filterCountText,
+                              isActive ? styles.filterCountTextActive : null,
+                            ]}
+                          >
+                            {getTaskFilterCount(tasks, filter.key)}
+                          </Text>
+                        </View>
+                      </Pressable>
+                    );
+                  })}
+                </View>
 
                 {isLoading ? (
                   <View style={styles.loadingState}>
@@ -329,68 +788,22 @@ export default function App() {
                 ) : null}
 
                 {!isLoading ? (
-                  <View style={styles.taskList}>
-                    {tasks.map((task) => (
-                      <View key={task.id} style={styles.taskCard}>
-                        <View style={styles.taskHeader}>
-                          <Text style={styles.taskTitle}>{task.title}</Text>
-                          <View
-                            style={[
-                              styles.badge,
-                              task.status === "completed" ? styles.completedBadge : null,
-                            ]}
-                          >
-                            <Text style={styles.badgeText}>{task.status}</Text>
+                  <View style={styles.taskSections}>
+                    {taskGroups.map((group) => (
+                      <View key={group.key} style={styles.taskSection}>
+                        <View style={styles.taskSectionHeader}>
+                          <Text style={styles.taskSectionTitle}>{group.label}</Text>
+                          <Text style={styles.taskSectionCount}>{group.tasks.length}</Text>
+                        </View>
+
+                        {group.tasks.length === 0 ? (
+                          <View style={styles.groupEmptyState}>
+                            <Text style={styles.groupEmptyTitle}>{group.emptyTitle}</Text>
+                            <Text style={styles.groupEmptyBody}>{group.emptyBody}</Text>
                           </View>
-                        </View>
-
-                        {task.notes ? <Text style={styles.taskNotes}>{task.notes}</Text> : null}
-
-                        <View style={styles.metaRow}>
-                          <Text style={styles.metaText}>Priority: {task.priority}</Text>
-                          <Text style={styles.metaText}>
-                            {task.estimated_duration_minutes
-                              ? `${task.estimated_duration_minutes} min`
-                              : "No estimate"}
-                          </Text>
-                        </View>
-
-                        <View style={styles.taskActionsRow}>
-                          <Pressable
-                            style={[
-                              styles.taskActionButton,
-                              activeTaskId === task.id ? styles.buttonDisabled : null,
-                            ]}
-                            onPress={() => void handleToggleTaskStatus(task)}
-                            disabled={activeTaskId === task.id}
-                          >
-                            <Text style={styles.taskActionButtonText}>
-                              {activeTaskId === task.id && activeTaskAction === "complete"
-                                ? "Completing..."
-                                : activeTaskId === task.id && activeTaskAction === "reopen"
-                                  ? "Reopening..."
-                                  : task.status === "completed"
-                                    ? "Reopen"
-                                    : "Complete"}
-                            </Text>
-                          </Pressable>
-
-                          <Pressable
-                            style={[
-                              styles.taskActionButton,
-                              styles.deleteButton,
-                              activeTaskId === task.id ? styles.buttonDisabled : null,
-                            ]}
-                            onPress={() => void handleDeleteTask(task.id)}
-                            disabled={activeTaskId === task.id}
-                          >
-                            <Text style={[styles.taskActionButtonText, styles.deleteButtonText]}>
-                              {activeTaskId === task.id && activeTaskAction === "delete"
-                                ? "Deleting..."
-                                : "Delete"}
-                            </Text>
-                          </Pressable>
-                        </View>
+                        ) : (
+                          <View style={styles.taskList}>{group.tasks.map(renderTaskCard)}</View>
+                        )}
                       </View>
                     ))}
                   </View>
@@ -573,6 +986,27 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
   },
+  noticeCard: {
+    borderRadius: 20,
+    backgroundColor: "#E5F1DE",
+    borderWidth: 1,
+    borderColor: "#B8D4AA",
+    paddingHorizontal: 18,
+    paddingVertical: 16,
+    gap: 8,
+  },
+  noticeLabel: {
+    color: "#355B22",
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 1,
+    textTransform: "uppercase",
+  },
+  noticeText: {
+    color: "#28451A",
+    fontSize: 14,
+    lineHeight: 20,
+  },
   loadingState: {
     flexDirection: "row",
     alignItems: "center",
@@ -598,6 +1032,94 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   emptyBody: {
+    color: "#5B615D",
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  filterRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  filterChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    backgroundColor: "#F5EADB",
+    borderWidth: 1,
+    borderColor: "#E0D0B5",
+  },
+  filterChipActive: {
+    backgroundColor: "#132A24",
+    borderColor: "#132A24",
+  },
+  filterChipText: {
+    color: "#26413C",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  filterChipTextActive: {
+    color: "#FFF8EE",
+  },
+  filterCountPill: {
+    minWidth: 24,
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    backgroundColor: "#FFF9F0",
+    alignItems: "center",
+  },
+  filterCountPillActive: {
+    backgroundColor: "#33594F",
+  },
+  filterCountText: {
+    color: "#5B615D",
+    fontSize: 11,
+    fontWeight: "800",
+  },
+  filterCountTextActive: {
+    color: "#FFF8EE",
+  },
+  taskSections: {
+    gap: 18,
+  },
+  taskSection: {
+    gap: 12,
+  },
+  taskSectionHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  taskSectionTitle: {
+    color: "#1D2A2C",
+    fontSize: 18,
+    fontWeight: "700",
+  },
+  taskSectionCount: {
+    color: "#6A6258",
+    fontSize: 12,
+    fontWeight: "800",
+    textTransform: "uppercase",
+  },
+  groupEmptyState: {
+    borderRadius: 18,
+    backgroundColor: "#F6EFE1",
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    borderWidth: 1,
+    borderColor: "#E2D8C3",
+    gap: 6,
+  },
+  groupEmptyTitle: {
+    color: "#1D2A2C",
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  groupEmptyBody: {
     color: "#5B615D",
     fontSize: 14,
     lineHeight: 20,
@@ -636,16 +1158,36 @@ const styles = StyleSheet.create({
   completedBadge: {
     backgroundColor: "#D7E1EF",
   },
+  scheduledBadge: {
+    backgroundColor: "#F3E2B8",
+  },
+  dueNowBadge: {
+    backgroundColor: "#F7D9BD",
+  },
   badgeText: {
     color: "#204636",
     fontSize: 11,
     fontWeight: "800",
     textTransform: "uppercase",
   },
+  completedBadgeText: {
+    color: "#324F75",
+  },
+  scheduledBadgeText: {
+    color: "#7B5D17",
+  },
+  dueNowBadgeText: {
+    color: "#8A4A16",
+  },
   taskNotes: {
     color: "#5C6462",
     fontSize: 14,
     lineHeight: 20,
+  },
+  scheduleMetaText: {
+    color: "#705A20",
+    fontSize: 13,
+    fontWeight: "600",
   },
   metaRow: {
     flexDirection: "row",
@@ -659,8 +1201,18 @@ const styles = StyleSheet.create({
   },
   taskActionsRow: {
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: 10,
     marginTop: 4,
+  },
+  scheduleEditor: {
+    gap: 10,
+    paddingTop: 4,
+  },
+  scheduleEditorLabel: {
+    color: "#415255",
+    fontSize: 13,
+    fontWeight: "700",
   },
   taskActionButton: {
     borderRadius: 999,
@@ -678,5 +1230,17 @@ const styles = StyleSheet.create({
   },
   deleteButtonText: {
     color: "#7F2E14",
+  },
+  scheduleButton: {
+    backgroundColor: "#F1E2B2",
+  },
+  scheduleButtonText: {
+    color: "#6D5513",
+  },
+  secondaryTaskButton: {
+    backgroundColor: "#E8EEE8",
+  },
+  secondaryTaskButtonText: {
+    color: "#27443E",
   },
 });

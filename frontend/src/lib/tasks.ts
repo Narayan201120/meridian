@@ -2,7 +2,7 @@ import { Platform } from "react-native";
 
 import { authRuntime, getAccessToken } from "./auth";
 
-export type TaskStatus = "inbox" | "scheduled" | "completed" | "archived";
+export type TaskStatus = "inbox" | "scheduled" | "due_now" | "completed" | "archived";
 export type TaskPriority = "low" | "medium" | "high";
 
 export type Task = {
@@ -21,6 +21,8 @@ export type Task = {
 export type CreateTaskInput = {
   title: string;
   notes?: string;
+  status?: Extract<TaskStatus, "inbox" | "scheduled">;
+  due_at?: string | null;
 };
 
 export type UpdateTaskInput = Partial<{
@@ -28,6 +30,7 @@ export type UpdateTaskInput = Partial<{
   notes: string | null;
   status: TaskStatus;
   priority: TaskPriority;
+  due_at: string | null;
 }>;
 
 const defaultApiBaseUrl = Platform.select({
@@ -59,11 +62,23 @@ let demoTasks: Task[] = [
     id: "demo-2",
     user_id: "demo-user",
     title: "Swap temporary auth for Supabase JWT",
-    notes: "The backend still uses X-User-Id for development.",
+    notes: "The backend now verifies Supabase bearer tokens and the frontend signs in through Supabase.",
     status: "scheduled",
     priority: "medium",
-    due_at: null,
+    due_at: new Date(Date.now() + 1000 * 60 * 90).toISOString(),
     estimated_duration_minutes: 60,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  },
+  {
+    id: "demo-3",
+    user_id: "demo-user",
+    title: "Ship the due-now experience",
+    notes: "Scheduled work should activate and ask for attention when its time arrives.",
+    status: "due_now",
+    priority: "high",
+    due_at: new Date(Date.now() - 1000 * 60 * 20).toISOString(),
+    estimated_duration_minutes: 30,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   },
@@ -127,6 +142,8 @@ export async function listTasks(): Promise<Task[]> {
 export async function createTask(input: CreateTaskInput): Promise<Task> {
   const title = input.title.trim();
   const notes = input.notes?.trim() || null;
+  const status = input.status ?? "inbox";
+  const dueAt = input.due_at ?? null;
 
   if (!title) {
     throw new Error("Task title cannot be blank.");
@@ -139,9 +156,9 @@ export async function createTask(input: CreateTaskInput): Promise<Task> {
       user_id: "demo-user",
       title,
       notes,
-      status: "inbox",
+      status,
       priority: "medium",
-      due_at: null,
+      due_at: dueAt,
       estimated_duration_minutes: null,
       created_at: now,
       updated_at: now,
@@ -157,6 +174,8 @@ export async function createTask(input: CreateTaskInput): Promise<Task> {
     body: JSON.stringify({
       title,
       notes,
+      status,
+      due_at: dueAt,
     }),
   });
 

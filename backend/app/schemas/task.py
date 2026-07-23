@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.models.task import ScheduleIntent, TaskPriority, TaskSource, TaskStatus
 
@@ -41,6 +41,12 @@ class TaskCreate(BaseModel):
     @classmethod
     def normalize_notes(cls, value: str | None) -> str | None:
         return _normalize_text(value)
+
+    @model_validator(mode="after")
+    def validate_scheduling(self) -> "TaskCreate":
+        if self.status == TaskStatus.SCHEDULED and self.due_at is None:
+            raise ValueError("Scheduled tasks require a scheduled time.")
+        return self
 
 
 class TaskUpdate(BaseModel):
