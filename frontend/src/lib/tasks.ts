@@ -27,6 +27,15 @@ export type CreateTaskInput = {
   estimated_duration_minutes?: number | null;
 };
 
+export type CaptureSuggestion = {
+  title: string;
+  notes: string | null;
+  priority: TaskPriority;
+  estimated_duration_minutes: number | null;
+  schedule_intent: "none" | "suggest_time" | "user_requested_block";
+  parser: string;
+};
+
 export type UpdateTaskInput = Partial<{
   title: string;
   notes: string | null;
@@ -194,6 +203,52 @@ export async function createTask(input: CreateTaskInput): Promise<Task> {
 
   const payload = (await response.json()) as Task;
   return normalizeTask(payload);
+}
+
+export async function structureCapture(text: string): Promise<CaptureSuggestion> {
+  const normalizedText = text.trim();
+
+  if (!normalizedText) {
+    throw new Error("Add a title or notes before structuring the capture.");
+  }
+
+  if (!tasksRuntime.isApiMode) {
+    const durationMatch = normalizedText.match(/\b(\d{1,3})\s*(minutes?|mins?|m|hours?|hrs?|h)\b/i);
+    const quantity = durationMatch ? Number(durationMatch[1]) : null;
+    const unit = durationMatch?.[2]?.toLowerCase() ?? "";
+    const estimatedDuration = quantity === null ? null : unit.startsWith("h") ? quantity * 60 : quantity;
+    const normalized = normalizedText.toLowerCase();
+
+    return {
+      title: normalizedText.split(/\r?\n/)[0] ?? normalizedText,
+      notes: normalizedText.split(/\r?\n/).slice(1).join("\n") || null,
+      priority: /urgent|asap|critical|important/.test(normalized)
+        ? "high"
+        : /someday|whenever|low priority/.test(normalized)
+          ? "low"
+          : "medium",
+      estimated_duration_minutes: estimatedDuration && estimatedDuration <= 1_440 ? estimatedDuration : null,
+      schedule_intent: /block/.test(normalized) && /calendar|time/.test(normalized)
+        ? "user_requested_block"
+        : /schedule|calendar|when should|find time/.test(normalized)
+          ? "suggest_time"
+          : "none",
+      parser: "heuristic_v1",
+    };
+  }
+
+  const response = await fetch(`${tasksRuntime.apiBaseUrl}/captures/structure`, {
+    method: "POST",
+    headers: buildApiHeaders("application/json"),
+    body: JSON.stringify({ text: normalizedText }),
+  });
+
+  if (!response.ok) {
+    const detail = await readErrorDetail(response);
+    throw new Error(detail || `Failed to structure capture (${response.status})`);
+  }
+
+  return (await response.json()) as CaptureSuggestion;
 }
 
 export async function updateTask(taskId: string, input: UpdateTaskInput): Promise<Task> {

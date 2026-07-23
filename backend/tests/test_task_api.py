@@ -251,3 +251,27 @@ async def test_delete_task_writes_mutation_log(client: AsyncClient, db_session) 
     assert len(logs) == 2
     assert logs[-1].mutation_kind == MutationKind.DELETE
     assert logs[-1].mutation_payload["deleted_at"] is not None
+
+
+async def test_structure_capture(client: AsyncClient) -> None:
+    response = await client.post(
+        "/api/v1/captures/structure",
+        json={
+            "text": "Urgent: prepare the planning brief\nBlock 2 hours on my calendar for this.",
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["title"] == "Urgent: prepare the planning brief"
+    assert data["notes"] == "Block 2 hours on my calendar for this."
+    assert data["priority"] == "high"
+    assert data["estimated_duration_minutes"] == 120
+    assert data["schedule_intent"] == "user_requested_block"
+    assert data["parser"] == "heuristic_v1"
+
+
+async def test_structure_capture_rejects_blank_text(client: AsyncClient) -> None:
+    response = await client.post("/api/v1/captures/structure", json={"text": "   "})
+
+    assert response.status_code == 422

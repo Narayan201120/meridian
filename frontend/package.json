@@ -1,7 +1,7 @@
 {
   "name": "meridian-frontend",
   "private": true,
-  "main": "expo/AppEntry",
+  "main": "expo-router/entry",
   "scripts": {
     "start": "expo start",
     "android": "expo start --android",
@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "expo": "~55.0.0",
+    "expo-router": "~55.0.17",
     "react": "19.2.0",
     "react-dom": "19.2.0",
     "react-native": "0.83.0",

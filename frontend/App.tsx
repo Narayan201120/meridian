@@ -21,6 +21,7 @@ import {
 import {
   createTask,
   deleteTask,
+  structureCapture,
   describeTaskError,
   listTasks,
   tasksRuntime,
@@ -149,6 +150,7 @@ export default function App() {
   );
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isStructuring, setIsStructuring] = useState(false);
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -220,6 +222,25 @@ export default function App() {
     setTasks((currentTasks) =>
       currentTasks.map((task) => (task.id === nextTask.id ? nextTask : task)),
     );
+  }
+
+  async function handleStructureCapture() {
+    const captureText = [title, notes].filter(Boolean).join("\n");
+
+    setIsStructuring(true);
+    setErrorMessage(null);
+
+    try {
+      const suggestion = await structureCapture(captureText);
+      setTitle(suggestion.title);
+      setNotes(suggestion.notes ?? "");
+      setDraftPriority(suggestion.priority);
+      setDraftDuration(suggestion.estimated_duration_minutes?.toString() ?? "");
+    } catch (error) {
+      setErrorMessage(describeTaskError(error));
+    } finally {
+      setIsStructuring(false);
+    }
   }
 
   async function handleCreateTask() {
@@ -880,6 +901,15 @@ export default function App() {
                   onChangeText={setNotes}
                   multiline
                 />
+                <Pressable
+                  style={[styles.secondaryButton, isStructuring ? styles.buttonDisabled : null]}
+                  onPress={() => void handleStructureCapture()}
+                  disabled={isStructuring}
+                >
+                  <Text style={styles.secondaryButtonText}>
+                    {isStructuring ? "Structuring..." : "Structure details"}
+                  </Text>
+                </Pressable>
                 <TextInput
                   placeholder="Estimated duration in minutes (optional)"
                   placeholderTextColor="#7D7A70"
