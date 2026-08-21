@@ -466,6 +466,91 @@ export async function confirmTaskCalendarBlock(taskId: string, blockId: string):
   return (await response.json()) as TaskCalendarBlock;
 }
 
+export type Reminder = {
+  id: string;
+  task_id: string | null;
+  task_calendar_block_id: string | null;
+  type: string;
+  scheduled_for: string;
+  status: string;
+  delivery_channel: string;
+  local_only: boolean;
+  sent_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export async function listReminders(taskId: string): Promise<Reminder[]> {
+  if (!tasksRuntime.isApiMode) {
+    // Demo: no reminders until scheduled in demo mode
+    return [];
+  }
+
+  const response = await fetch(`${tasksRuntime.apiBaseUrl}/tasks/${taskId}/reminders`, {
+    headers: buildApiHeaders(),
+  });
+
+  if (!response.ok) {
+    const detail = await readErrorDetail(response);
+    throw new Error(detail || `Failed to list reminders (${response.status})`);
+  }
+
+  return (await response.json()) as Reminder[];
+}
+
+export async function dispatchReminders(): Promise<{ dispatched: number; reminders: Reminder[] }> {
+  if (!tasksRuntime.isApiMode) {
+    return { dispatched: 0, reminders: [] };
+  }
+  const response = await fetch(`${tasksRuntime.apiBaseUrl}/tasks/reminders/dispatch`, {
+    method: "POST",
+    headers: buildApiHeaders(),
+  });
+  if (!response.ok) {
+    const detail = await readErrorDetail(response);
+    throw new Error(detail || `Failed to dispatch reminders (${response.status})`);
+  }
+  return (await response.json()) as { dispatched: number; reminders: Reminder[] };
+}
+
+export async function acknowledgeReminder(reminderId: string): Promise<Reminder> {
+  if (!tasksRuntime.isApiMode) {
+    return {
+      id: reminderId,
+      task_id: null,
+      task_calendar_block_id: null,
+      type: "due_date",
+      scheduled_for: new Date().toISOString(),
+      status: "sent",
+      delivery_channel: "push",
+      local_only: false,
+      sent_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+  }
+  const response = await fetch(`${tasksRuntime.apiBaseUrl}/tasks/reminders/${reminderId}/ack`, {
+    method: "POST",
+    headers: buildApiHeaders(),
+  });
+  if (!response.ok) {
+    const detail = await readErrorDetail(response);
+    throw new Error(detail || `Failed to ack reminder (${response.status})`);
+  }
+  return (await response.json()) as Reminder;
+}
+
+export async function listAllReminders(status?: string): Promise<Reminder[]> {
+  if (!tasksRuntime.isApiMode) return [];
+  const url = status ? `${tasksRuntime.apiBaseUrl}/tasks/reminders/list?status_filter=${status}` : `${tasksRuntime.apiBaseUrl}/tasks/reminders/list`;
+  const response = await fetch(url, { headers: buildApiHeaders() });
+  if (!response.ok) {
+    const detail = await readErrorDetail(response);
+    throw new Error(detail || `Failed to list reminders (${response.status})`);
+  }
+  return (await response.json()) as Reminder[];
+}
+
 export function describeTaskError(error: unknown): string {
   if (!tasksRuntime.isApiMode) {
     return extractErrorMessage(error);

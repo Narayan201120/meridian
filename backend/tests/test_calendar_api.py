@@ -269,3 +269,88 @@ async def test_unschedule_cancels_reminder(client, db_session):
     # should have canceled
     all_rems = await db_session.scalars(select(Reminder).where(Reminder.task_id == task_id))
     assert any(r.status == "canceled" for r in all_rems.all())
+
+
+@pytest.mark.asyncio
+async def test_list_reminders_via_api(client, db_session):
+    from sqlalchemy import select
+
+    from app.models import Reminder
+
+    future = datetime.now(timezone.utc) + timedelta(days=2, hours=1)
+    future = future.replace(minute=0, second=0, microsecond=0)
+    resp = await client.post("/api/v1/tasks", json={"title": "API remind", "status": "scheduled", "due_at": future.isoformat()})
+    task_id = resp.json()["id"]
+    # via API
+    api_resp = await client.get(f"/api/v1/tasks/{task_id}/reminders")
+    assert api_resp.status_code == 200, api_resp.text
+    body = api_resp.json()
+    assert len(body) == 1
+    assert body[0]["type"] == "due_date"
+    assert body[0]["task_id"] == task_id
+    # also verify via DB still 1
+    from uuid import UUID
+
+    rems = await db_session.scalars(select(Reminder).where(Reminder.task_id == UUID(task_id)))
+    assert len(list(rems.all())) == 1
+
+
+@pytest.mark.asyncio
+async def test_list_reminders_requires_auth(unauthenticated_client):
+    import uuid
+
+    fake_id = str(uuid.uuid4())
+    resp = await unauthenticated_client.get(f"/api/v1/tasks/{fake_id}/reminders")
+    assert resp.status_code in (401, 403)
+
+
+@pytest.mark.asyncio
+async def test_dispatch_and_ack_reminder(client, db_session):
+    from datetime import datetime, timedelta, timezone
+    from uuid import UUID
+
+    from sqlalchemy import select
+
+    from app.models import NotificationDelivery, Reminder
+
+    # create task scheduled 1 hour ahead
+    future = datetime.now(timezone.utc) + timedelta(hours=1)
+    future = future.replace(minute=0, second=0, microsecond=0)
+    resp = await client.post("/api/v1/tasks", json={"title": "Dispatch me", "status": "scheduled", "due_at": future.isoformat()})
+    task_id = UUID(resp.json()["id"])
+    # force reminder to be due (scheduled_for in past)
+    rems = await db_session.scalars(select(Reminder).where(Reminder.task_id == task_id))
+    items = list(rems.all())
+    assert len(items) == 1
+    r = items[0]
+    r.scheduled_for = datetime.now(timezone.utc) - timedelta(minutes=1)
+    await db_session.commit()
+    # dispatch
+    disp = await client.post("/api/v1/tasks/reminders/dispatch")
+    assert disp.status_code == 200, disp.text
+    body = disp.json()
+    assert body["dispatched"] == 1
+    assert len(body["reminders"]) == 1
+    # reminder should now be sent
+    await db_session.refresh(r)
+    assert r.status == "sent"
+    assert r.sent_at is not None
+    # delivery should exist
+    dels = await db_session.scalars(select(NotificationDelivery).where(NotificationDelivery.reminder_id == r.id))
+    assert len(list(dels.all())) == 1
+    # ack
+    ack = await client.post(f"/api/v1/tasks/reminders/{r.id}/ack")
+    assert ack.status_code == 200
+    # delivery should be acknowledged
+    dels2 = await db_session.scalars(select(NotificationDelivery).where(NotificationDelivery.reminder_id == r.id))
+    assert any(d.status == "acknowledged" for d in dels2.all())
+    # list all reminders
+    lst = await client.get("/api/v1/tasks/reminders/list")
+    assert lst.status_code == 200
+    assert any(x["id"] == str(r.id) for x in lst.json())
+
+
+@pytest.mark.asyncio
+async def test_dispatch_requires_auth(unauthenticated_client):
+    resp = await unauthenticated_client.post("/api/v1/tasks/reminders/dispatch")
+    assert resp.status_code in (401, 403)

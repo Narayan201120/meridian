@@ -19,16 +19,21 @@ import {
   type AuthSession,
 } from "./src/lib/auth";
 import {
+  acknowledgeReminder,
   confirmTaskCalendarBlock,
   createTaskCalendarBlock,
   createTask,
   deleteTask,
+  dispatchReminders,
   getCalendarStatus,
+  listAllReminders,
+  listReminders,
   structureCapture,
   describeTaskError,
   listTasks,
   suggestBlocks,
   tasksRuntime,
+  type Reminder,
   type SuggestedBlock,
   type Task,
   updateTask,
@@ -175,6 +180,45 @@ export default function App() {
   const [suggestTaskId, setSuggestTaskId] = useState<string | null>(null);
   const [suggestionsByTask, setSuggestionsByTask] = useState<Record<string, SuggestedBlock[]>>({});
   const [calendarStatus, setCalendarStatus] = useState<string | null>(null);
+  const [remindersByTask, setRemindersByTask] = useState<Record<string, Reminder[]>>({});
+  const [pendingReminders, setPendingReminders] = useState<Reminder[]>([]);
+  const [dispatchNotice, setDispatchNotice] = useState<string | null>(null);
+
+  async function loadRemindersForTasks(nextTasks: Task[]) {
+    if (!tasksRuntime.isApiMode || authSession === null) return;
+    const scheduled = nextTasks.filter((t) => t.status === "scheduled" || t.status === "due_now");
+    if (scheduled.length === 0) {
+      setRemindersByTask({});
+      return;
+    }
+    try {
+      const entries = await Promise.all(
+        scheduled.map(async (t) => {
+          try {
+            const rems = await listReminders(t.id);
+            return [t.id, rems] as const;
+          } catch {
+            return [t.id, [] as Reminder[]] as const;
+          }
+        }),
+      );
+      const next: Record<string, Reminder[]> = {};
+      for (const [id, rems] of entries) next[id] = rems;
+      setRemindersByTask(next);
+    } catch {
+      // ignore
+    }
+  }
+
+  async function refreshRemindersForTask(taskId: string) {
+    if (!tasksRuntime.isApiMode || authSession === null) return;
+    try {
+      const rems = await listReminders(taskId);
+      setRemindersByTask((prev) => ({ ...prev, [taskId]: rems }));
+    } catch {
+      // ignore
+    }
+  }
 
   async function loadTasks({ silent = false }: { silent?: boolean } = {}) {
     if (!silent) {
@@ -193,6 +237,7 @@ export default function App() {
           : null,
       );
       setTasks(nextTasks);
+      void loadRemindersForTasks(nextTasks);
     } catch (error) {
       if (!silent) {
         setErrorMessage(describeTaskError(error));
@@ -224,6 +269,36 @@ export default function App() {
     }, 30_000);
 
     return () => clearInterval(intervalId);
+  }, [authSession]);
+
+  useEffect(() => {
+    if (!tasksRuntime.isApiMode || authSession === null) {
+      setPendingReminders([]);
+      setDispatchNotice(null);
+      return;
+    }
+
+    const dispatch = async () => {
+      try {
+        const res = await dispatchReminders();
+        if (res.dispatched > 0) {
+          setDispatchNotice(`${res.dispatched} reminder${res.dispatched > 1 ? "s" : ""} dispatched — marked sent`);
+          // refresh reminders after dispatch
+          const all = await listAllReminders();
+          setPendingReminders(all.filter((r) => r.status === "sent" || r.status === "pending"));
+          void loadTasks({ silent: true });
+        } else {
+          const all = await listAllReminders("pending");
+          setPendingReminders(all.slice(0, 5));
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    void dispatch();
+    const id = setInterval(() => void dispatch(), 30_000);
+    return () => clearInterval(id);
   }, [authSession]);
 
   useEffect(() => {
@@ -321,6 +396,9 @@ export default function App() {
       setTasks((currentTasks) => [nextTask, ...currentTasks]);
       if (activeTaskFilter !== "all" && activeTaskFilter !== nextTask.status) {
         setActiveTaskFilter(nextTask.status);
+      }
+      if (nextTask.status === "scheduled" || nextTask.status === "due_now") {
+        void refreshRemindersForTask(nextTask.id);
       }
       setTitle("");
       setNotes("");
@@ -494,6 +572,7 @@ export default function App() {
       }
       setScheduleEditorTaskId(null);
       setScheduleEditorValue("");
+      void refreshRemindersForTask(task.id);
     } catch (error) {
       setErrorMessage(describeTaskError(error));
     } finally {
@@ -515,6 +594,7 @@ export default function App() {
       }
       setScheduleEditorTaskId(null);
       setScheduleEditorValue("");
+      void refreshRemindersForTask(task.id);
     } catch (error) {
       setErrorMessage(describeTaskError(error));
     } finally {
@@ -575,6 +655,7 @@ export default function App() {
           setScheduleEditorTaskId(null);
           setScheduleEditorValue("");
           setSuggestTaskId(null);
+          void refreshRemindersForTask(task.id);
           return;
         } catch (blockError) {
           // Fall back to direct schedule if block/confirm fails (e.g., not_connected)
@@ -594,6 +675,7 @@ export default function App() {
       setScheduleEditorTaskId(null);
       setScheduleEditorValue("");
       setSuggestTaskId(null);
+      void refreshRemindersForTask(task.id);
     } catch (error) {
       setErrorMessage(describeTaskError(error));
     } finally {
@@ -715,6 +797,18 @@ export default function App() {
             {task.status === "scheduled" ? "Scheduled for" : "Activated at"}:{" "}
             {formatTaskTime(task.due_at)}
           </Text>
+        ) : null}
+
+        {(remindersByTask[task.id] ?? []).length > 0 ? (
+          <View style={styles.reminderList}>
+            {(remindersByTask[task.id] ?? []).map((r) => (
+              <Text key={r.id} style={styles.reminderText}>
+                Remind {r.status === "canceled" ? "(canceled) " : ""}{r.type === "scheduled_block" ? "block" : "due"} at {formatTaskTime(r.scheduled_for)} · {r.status}
+              </Text>
+            ))}
+          </View>
+        ) : task.status === "scheduled" || task.status === "due_now" ? (
+          <Text style={styles.reminderEmpty}>No reminder yet — will remind at scheduled time.</Text>
         ) : null}
 
         {isEditingSchedule ? (
@@ -1131,6 +1225,41 @@ export default function App() {
                 <View style={styles.noticeCard}>
                   <Text style={styles.noticeLabel}>Due now</Text>
                   <Text style={styles.noticeText}>{dueNotice}</Text>
+                </View>
+              ) : null}
+
+              {dispatchNotice ? (
+                <View style={styles.noticeCard}>
+                  <Text style={styles.noticeLabel}>Reminders</Text>
+                  <Text style={styles.noticeText}>{dispatchNotice}</Text>
+                </View>
+              ) : null}
+
+              {pendingReminders.length > 0 ? (
+                <View style={styles.card}>
+                  <Text style={styles.cardEyebrow}>Pending reminders</Text>
+                  <Text style={styles.sectionBody}>
+                    {pendingReminders.length} reminder{pendingReminders.length > 1 ? "s" : ""} waiting for delivery. Tap ack when seen.
+                  </Text>
+                  {pendingReminders.map((r) => (
+                    <View key={r.id} style={styles.suggestionCard}>
+                      <Text style={styles.suggestionTime}>{r.type === "scheduled_block" ? "Block" : "Due"} — {formatTaskTime(r.scheduled_for)}</Text>
+                      <Text style={styles.suggestionTimeSmall}>{r.status} · {r.id.slice(0, 8)}</Text>
+                      <Pressable
+                        style={[styles.taskActionButton, styles.secondaryTaskButton]}
+                        onPress={async () => {
+                          try {
+                            await acknowledgeReminder(r.id);
+                            setPendingReminders((prev) => prev.filter((x) => x.id !== r.id));
+                          } catch (e) {
+                            setErrorMessage(describeTaskError(e));
+                          }
+                        }}
+                      >
+                        <Text style={[styles.taskActionButtonText, styles.secondaryTaskButtonText]}>Ack</Text>
+                      </Pressable>
+                    </View>
+                  ))}
                 </View>
               ) : null}
 
@@ -1691,5 +1820,20 @@ const styles = StyleSheet.create({
   suggestionTimeSmall: {
     color: "#415255",
     fontSize: 13,
+  },
+  reminderList: {
+    gap: 6,
+    marginTop: 4,
+  },
+  reminderText: {
+    color: "#355B22",
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  reminderEmpty: {
+    color: "#6A6258",
+    fontSize: 12,
+    fontStyle: "italic",
+    marginTop: 2,
   },
 });

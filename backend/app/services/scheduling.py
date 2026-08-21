@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from sqlalchemy import select
 
-from app.models.calendar_connection import Reminder, ReminderStatus, ReminderType, TaskCalendarBlock, TaskCalendarBlockStatus
+from app.models.calendar_connection import NotificationDelivery, NotificationDeliveryStatus, Reminder, ReminderStatus, ReminderType, TaskCalendarBlock, TaskCalendarBlockStatus
 from app.models.task import TaskStatus
 from app.repositories.tasks import TaskRepository
 from app.schemas.calendar import SuggestedBlock
@@ -325,3 +325,49 @@ class SchedulingService:
         )
         self.session.add(due_reminder)
         await self.session.commit()
+
+    async def dispatch_due_reminders(self, *, user_id: UUID) -> list[Reminder]:
+        now = datetime.now(timezone.utc)
+        result = await self.session.scalars(
+            select(Reminder).where(
+                Reminder.user_id == user_id,
+                Reminder.scheduled_for <= now,
+                Reminder.status == ReminderStatus.PENDING,
+            )
+        )
+        due = list(result.all())
+        dispatched: list[Reminder] = []
+        for reminder in due:
+            # Create delivery (fcm mock as sent)
+            delivery = NotificationDelivery(
+                user_id=user_id,
+                reminder_id=reminder.id,
+                provider="fcm",
+                status=NotificationDeliveryStatus.SENT,
+                attempted_at=now,
+                delivered_at=now,
+            )
+            self.session.add(delivery)
+            reminder.status = ReminderStatus.SENT
+            reminder.sent_at = now
+            dispatched.append(reminder)
+        if dispatched:
+            await self.session.commit()
+            for r in dispatched:
+                await self.session.refresh(r)
+        return dispatched
+
+    async def acknowledge_reminder(self, *, user_id: UUID, reminder_id: UUID) -> Reminder:
+        reminder = await self.session.scalar(select(Reminder).where(Reminder.id == reminder_id, Reminder.user_id == user_id))
+        if reminder is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reminder not found.")
+        # Mark deliveries as acknowledged
+        deliveries = await self.session.scalars(select(NotificationDelivery).where(NotificationDelivery.reminder_id == reminder_id, NotificationDelivery.user_id == user_id))
+        for d in deliveries.all():
+            d.status = NotificationDeliveryStatus.ACKNOWLEDGED
+        if reminder.status == ReminderStatus.SENT:
+            # keep sent, but acknowledge delivery suffices; we keep reminder as SENT
+            pass
+        await self.session.commit()
+        await self.session.refresh(reminder)
+        return reminder

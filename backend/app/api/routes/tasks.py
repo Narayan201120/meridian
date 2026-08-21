@@ -7,7 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user_id
 from app.db.session import get_db_session
 from app.models.task import TaskPriority, TaskStatus
-from app.schemas.calendar import SuggestBlocksRequest, SuggestBlocksResponse, TaskCalendarBlockCreate, TaskCalendarBlockRead
+from sqlalchemy import select
+
+from app.models.calendar_connection import Reminder
+from app.schemas.calendar import DispatchResponse, ReminderRead, SuggestBlocksRequest, SuggestBlocksResponse, TaskCalendarBlockCreate, TaskCalendarBlockRead
 from app.schemas.task import TaskCreate, TaskRead, TaskUpdate
 from app.services.scheduling import SchedulingService
 from app.services.tasks import TaskService
@@ -144,4 +147,56 @@ async def confirm_block(
 ) -> TaskCalendarBlockRead:
     block = await scheduling_service.confirm_block(user_id=current_user_id, task_id=task_id, block_id=block_id)
     return TaskCalendarBlockRead.model_validate(block)
+
+
+@router.get("/{task_id}/reminders", response_model=list[ReminderRead], summary="List reminders for a task")
+async def list_reminders(
+    task_id: UUID,
+    current_user_id: Annotated[UUID, Depends(get_current_user_id)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> list[ReminderRead]:
+    # Verify task belongs to user (reuse task service check via direct query)
+    from app.models.task import Task
+
+    task = await session.scalar(select(Task).where(Task.id == task_id, Task.user_id == current_user_id, Task.deleted_at.is_(None)))
+    if task is None:
+        from fastapi import HTTPException, status
+
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found.")
+    result = await session.scalars(select(Reminder).where(Reminder.user_id == current_user_id, Reminder.task_id == task_id).order_by(Reminder.scheduled_for.asc()))
+    return [ReminderRead.model_validate(r) for r in result.all()]
+
+
+@router.get("/reminders/list", response_model=list[ReminderRead], summary="List all reminders for current user")
+async def list_all_reminders(
+    current_user_id: Annotated[UUID, Depends(get_current_user_id)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    status_filter: str | None = None,
+) -> list[ReminderRead]:
+    query = select(Reminder).where(Reminder.user_id == current_user_id).order_by(Reminder.scheduled_for.asc())
+    # status filter via query param is optional string check
+    result = await session.scalars(query)
+    items = list(result.all())
+    if status_filter:
+        items = [r for r in items if r.status == status_filter]
+    return [ReminderRead.model_validate(r) for r in items]
+
+
+@router.post("/reminders/dispatch", response_model=DispatchResponse, summary="Dispatch due reminders (create deliveries, mark sent)")
+async def dispatch_reminders(
+    current_user_id: Annotated[UUID, Depends(get_current_user_id)],
+    scheduling_service: Annotated[SchedulingService, Depends(get_scheduling_service)],
+) -> DispatchResponse:
+    dispatched = await scheduling_service.dispatch_due_reminders(user_id=current_user_id)
+    return DispatchResponse(dispatched=len(dispatched), reminders=[ReminderRead.model_validate(r) for r in dispatched])
+
+
+@router.post("/reminders/{reminder_id}/ack", response_model=ReminderRead, summary="Acknowledge a reminder delivery")
+async def ack_reminder(
+    reminder_id: UUID,
+    current_user_id: Annotated[UUID, Depends(get_current_user_id)],
+    scheduling_service: Annotated[SchedulingService, Depends(get_scheduling_service)],
+) -> ReminderRead:
+    reminder = await scheduling_service.acknowledge_reminder(user_id=current_user_id, reminder_id=reminder_id)
+    return ReminderRead.model_validate(reminder)
 

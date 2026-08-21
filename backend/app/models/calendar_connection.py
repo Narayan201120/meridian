@@ -34,6 +34,13 @@ class ReminderStatus(StrEnum):
     CANCELED = "canceled"
 
 
+class NotificationDeliveryStatus(StrEnum):
+    PENDING = "pending"
+    SENT = "sent"
+    FAILED = "failed"
+    ACKNOWLEDGED = "acknowledged"
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -111,5 +118,27 @@ class Reminder(Base):
     local_only: Mapped[bool] = mapped_column(nullable=False, default=False)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow, server_default=text("CURRENT_TIMESTAMP"))
+
+
+class NotificationDelivery(Base):
+    __tablename__ = "notification_deliveries"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4, server_default=text("gen_random_uuid()"))
+    user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
+    reminder_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    device_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    provider: Mapped[str] = mapped_column(Text, nullable=False, default="fcm")
+    status: Mapped[NotificationDeliveryStatus] = mapped_column(
+        SqlEnum(NotificationDeliveryStatus, name="notification_delivery_status", native_enum=True, create_type=False, values_callable=_enum_values),
+        nullable=False,
+        default=NotificationDeliveryStatus.PENDING,
+        server_default=NotificationDeliveryStatus.PENDING.value,
+    )
+    provider_message_id: Mapped[str | None] = mapped_column(Text)
+    attempted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_message: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow, server_default=text("CURRENT_TIMESTAMP"))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow, server_default=text("CURRENT_TIMESTAMP"))

@@ -63,3 +63,26 @@ class TaskCalendarBlockRead(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class ReminderRead(BaseModel):
+    id: UUID
+    user_id: UUID
+    task_id: UUID | None
+    task_calendar_block_id: UUID | None
+    type: str
+    scheduled_for: datetime
+    status: str
+    delivery_channel: str
+    local_only: bool
+    sent_at: datetime | None
+    last_error_message: str | None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class DispatchResponse(BaseModel):
+    dispatched: int
+    reminders: list[ReminderRead] = Field(default_factory=list)
