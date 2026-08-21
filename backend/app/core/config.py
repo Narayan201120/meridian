@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     database_echo: bool = False
     supabase_url: str | None = None
     supabase_jwt_audience: str = "authenticated"
+    google_calendar_client_id: str | None = None
+    google_calendar_client_secret: str | None = None
+    google_calendar_redirect_uri: str = "http://127.0.0.1:8000/api/v1/calendar/google/callback"
+    token_encryption_key: str | None = None
+    google_oauth_state_secret: str | None = None
     cors_origins: Annotated[list[str], NoDecode] = [
         "http://localhost:8081",
         "http://127.0.0.1:8081",
@@ -36,6 +41,10 @@ class Settings(BaseSettings):
         return value
 
     @property
+    def oauth_state_secret(self) -> str | None:
+        return self.google_oauth_state_secret or self.token_encryption_key
+
+    @property
     def supabase_jwt_issuer(self) -> str | None:
         if self.supabase_url is None:
             return None
@@ -49,6 +58,19 @@ class Settings(BaseSettings):
             return None
 
         return f"{issuer}/.well-known/jwks.json"
+
+    def get_fernet(self):  # type: ignore[no-untyped-def]
+        from cryptography.fernet import Fernet
+
+        if not self.token_encryption_key:
+            return None
+        try:
+            return Fernet(self.token_encryption_key.encode())
+        except Exception as exc:
+            raise ValueError(
+                "MERIDIAN_TOKEN_ENCRYPTION_KEY must be a valid Fernet key. "
+                "Generate one with: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
+            ) from exc
 
 
 @lru_cache

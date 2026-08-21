@@ -36,6 +36,25 @@ export type CaptureSuggestion = {
   parser: string;
 };
 
+export type SuggestedBlock = {
+  suggested_start_at: string;
+  suggested_end_at: string;
+  reason: Record<string, unknown>;
+};
+
+export type SuggestBlocksResponse = {
+  task_id: string;
+  duration_minutes: number;
+  suggestions: SuggestedBlock[];
+};
+
+export type SuggestBlocksInput = {
+  duration_minutes?: number | null;
+  time_min?: string | null;
+  time_max?: string | null;
+  max_results?: number;
+};
+
 export type UpdateTaskInput = Partial<{
   title: string;
   notes: string | null;
@@ -300,6 +319,151 @@ export async function deleteTask(taskId: string): Promise<void> {
     const detail = await readErrorDetail(response);
     throw new Error(detail || `Failed to delete task (${response.status})`);
   }
+}
+
+export async function getCalendarStatus(): Promise<string> {
+  if (!tasksRuntime.isApiMode) {
+    return "not_connected";
+  }
+
+  const response = await fetch(`${tasksRuntime.apiBaseUrl}/calendar/google/status`, {
+    headers: buildApiHeaders(),
+  });
+
+  if (!response.ok) {
+    const detail = await readErrorDetail(response);
+    throw new Error(detail || `Failed to load calendar status (${response.status})`);
+  }
+
+  const payload = (await response.json()) as { status: string };
+  return payload.status;
+}
+
+export async function suggestBlocks(taskId: string, input: SuggestBlocksInput = {}): Promise<SuggestBlocksResponse> {
+  if (!tasksRuntime.isApiMode) {
+    const now = new Date();
+    const duration = input.duration_minutes ?? 30;
+    const suggestions: SuggestedBlock[] = Array.from({ length: input.max_results ?? 3 }, (_, idx) => {
+      const start = new Date(now.getTime() + (idx + 1) * 60 * 60 * 1000);
+      start.setMinutes(0, 0, 0);
+      const end = new Date(start.getTime() + duration * 60 * 1000);
+      return {
+        suggested_start_at: start.toISOString(),
+        suggested_end_at: end.toISOString(),
+        reason: { kind: "demo_gap", duration_minutes: duration },
+      };
+    });
+    return { task_id: taskId, duration_minutes: duration, suggestions };
+  }
+
+  const response = await fetch(`${tasksRuntime.apiBaseUrl}/tasks/${taskId}/suggest-blocks`, {
+    method: "POST",
+    headers: buildApiHeaders("application/json"),
+    body: JSON.stringify({
+      duration_minutes: input.duration_minutes ?? null,
+      time_min: input.time_min ?? null,
+      time_max: input.time_max ?? null,
+      max_results: input.max_results ?? 3,
+    }),
+  });
+
+  if (!response.ok) {
+    const detail = await readErrorDetail(response);
+    throw new Error(detail || `Failed to suggest blocks (${response.status})`);
+  }
+
+  return (await response.json()) as SuggestBlocksResponse;
+}
+
+export type TaskCalendarBlock = {
+  id: string;
+  user_id: string;
+  task_id: string;
+  calendar_connection_id: string;
+  calendar_event_id: string | null;
+  status: string;
+  suggested_start_at: string;
+  suggested_end_at: string;
+  suggestion_reason: Record<string, unknown>;
+  approved_at: string | null;
+  write_requested_at: string | null;
+  write_completed_at: string | null;
+  last_error_message: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export async function createTaskCalendarBlock(taskId: string, block: SuggestedBlock): Promise<TaskCalendarBlock> {
+  if (!tasksRuntime.isApiMode) {
+    return {
+      id: `demo-block-${Date.now()}`,
+      user_id: "demo-user",
+      task_id: taskId,
+      calendar_connection_id: "demo-conn",
+      calendar_event_id: null,
+      status: "suggested",
+      suggested_start_at: block.suggested_start_at,
+      suggested_end_at: block.suggested_end_at,
+      suggestion_reason: block.reason,
+      approved_at: null,
+      write_requested_at: null,
+      write_completed_at: null,
+      last_error_message: null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+  }
+
+  const response = await fetch(`${tasksRuntime.apiBaseUrl}/tasks/${taskId}/blocks`, {
+    method: "POST",
+    headers: buildApiHeaders("application/json"),
+    body: JSON.stringify({
+      suggested_start_at: block.suggested_start_at,
+      suggested_end_at: block.suggested_end_at,
+      suggestion_reason: block.reason,
+    }),
+  });
+
+  if (!response.ok) {
+    const detail = await readErrorDetail(response);
+    throw new Error(detail || `Failed to create calendar block (${response.status})`);
+  }
+
+  return (await response.json()) as TaskCalendarBlock;
+}
+
+export async function confirmTaskCalendarBlock(taskId: string, blockId: string): Promise<TaskCalendarBlock> {
+  if (!tasksRuntime.isApiMode) {
+    return {
+      id: blockId,
+      user_id: "demo-user",
+      task_id: taskId,
+      calendar_connection_id: "demo-conn",
+      calendar_event_id: `demo-evt-${Date.now()}`,
+      status: "confirmed",
+      suggested_start_at: new Date().toISOString(),
+      suggested_end_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+      suggestion_reason: { external_event_id: `demo-evt-${Date.now()}` },
+      approved_at: new Date().toISOString(),
+      write_requested_at: new Date().toISOString(),
+      write_completed_at: new Date().toISOString(),
+      last_error_message: null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+  }
+
+  const response = await fetch(`${tasksRuntime.apiBaseUrl}/tasks/${taskId}/blocks/${blockId}/confirm`, {
+    method: "POST",
+    headers: buildApiHeaders(),
+  });
+
+  if (!response.ok) {
+    const detail = await readErrorDetail(response);
+    throw new Error(detail || `Failed to confirm calendar block (${response.status})`);
+  }
+
+  return (await response.json()) as TaskCalendarBlock;
 }
 
 export function describeTaskError(error: unknown): string {

@@ -14,7 +14,8 @@ AI-assisted productivity app for fast task capture, calendar-aware planning, and
   - local Supabase CLI config
 - `frontend/`
   - real Expo app scaffold using Bun
-  - first task-oriented screen with demo mode and authenticated API mode wiring
+  - Expo Router foundation with the task flow as the root route
+  - task capture, structuring, scheduling, foreground due-now refresh, and authenticated API mode
 
 ## Backend Run
 From `backend/`:

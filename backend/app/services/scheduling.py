@@ -1,0 +1,275 @@
+from datetime import datetime, timedelta, timezone
+from uuid import UUID
+
+from fastapi import HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from sqlalchemy import select
+
+from app.models.calendar_connection import TaskCalendarBlock, TaskCalendarBlockStatus
+from app.models.task import TaskStatus
+from app.repositories.tasks import TaskRepository
+from app.schemas.calendar import SuggestedBlock
+from app.services.google_calendar import GoogleCalendarService
+
+
+WORK_START_HOUR = 9
+WORK_END_HOUR = 18
+SLOT_GRANULARITY_MINUTES = 15
+
+
+def _parse_busy_intervals(raw_busy: list[dict[str, str]]) -> list[tuple[datetime, datetime]]:
+    intervals: list[tuple[datetime, datetime]] = []
+    for entry in raw_busy:
+        start_raw = entry.get("start")
+        end_raw = entry.get("end")
+        if not start_raw or not end_raw:
+            continue
+        try:
+            start = datetime.fromisoformat(start_raw.replace("Z", "+00:00"))
+            end = datetime.fromisoformat(end_raw.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if end <= start:
+            continue
+        intervals.append((start, end))
+    intervals.sort(key=lambda x: x[0])
+    return intervals
+
+
+def find_free_slots(
+    *,
+    busy: list[tuple[datetime, datetime]],
+    time_min: datetime,
+    time_max: datetime,
+    duration: timedelta,
+    max_results: int = 3,
+) -> list[tuple[datetime, datetime]]:
+    if duration <= timedelta(0):
+        return []
+    if time_max <= time_min:
+        return []
+
+    # Merge overlapping busy intervals within window
+    merged: list[tuple[datetime, datetime]] = []
+    for start, end in busy:
+        clipped_start = max(start, time_min)
+        clipped_end = min(end, time_max)
+        if clipped_end <= clipped_start:
+            continue
+        if not merged or clipped_start > merged[-1][1]:
+            merged.append((clipped_start, clipped_end))
+        else:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], clipped_end))
+
+    candidates: list[tuple[datetime, datetime]] = []
+    cursor = time_min
+
+    def align_to_granularity(dt: datetime) -> datetime:
+        # Round up to next 15-min boundary
+        minute = dt.minute
+        remainder = minute % SLOT_GRANULARITY_MINUTES
+        if remainder == 0 and dt.second == 0 and dt.microsecond == 0:
+            return dt.replace(second=0, microsecond=0)
+        delta = SLOT_GRANULARITY_MINUTES - remainder
+        aligned = (dt.replace(second=0, microsecond=0) + timedelta(minutes=delta))
+        return aligned
+
+    cursor = align_to_granularity(cursor)
+
+    for busy_start, busy_end in merged:
+        while cursor + duration <= busy_start and len(candidates) < max_results:
+            # Enforce work hours on each candidate day
+            day_start = cursor.replace(hour=WORK_START_HOUR, minute=0, second=0, microsecond=0)
+            day_end = cursor.replace(hour=WORK_END_HOUR, minute=0, second=0, microsecond=0)
+            if cursor < day_start:
+                cursor = day_start
+                continue
+            if cursor + duration > day_end:
+                # Jump to next work day
+                cursor = (cursor + timedelta(days=1)).replace(hour=WORK_START_HOUR, minute=0, second=0, microsecond=0)
+                cursor = align_to_granularity(cursor)
+                if cursor + duration > time_max:
+                    return candidates
+                continue
+            if cursor + duration <= busy_start:
+                candidates.append((cursor, cursor + duration))
+            cursor += timedelta(minutes=SLOT_GRANULARITY_MINUTES)
+            cursor = align_to_granularity(cursor)
+            if cursor + duration > busy_start:
+                break
+        if len(candidates) >= max_results:
+            break
+        if cursor < busy_end:
+            cursor = align_to_granularity(busy_end)
+        if cursor + duration > time_max:
+            break
+
+    # Tail window after last busy interval
+    while cursor + duration <= time_max and len(candidates) < max_results:
+        day_start = cursor.replace(hour=WORK_START_HOUR, minute=0, second=0, microsecond=0)
+        day_end = cursor.replace(hour=WORK_END_HOUR, minute=0, second=0, microsecond=0)
+        if cursor < day_start:
+            cursor = day_start
+            continue
+        if cursor + duration > day_end:
+            cursor = (cursor + timedelta(days=1)).replace(hour=WORK_START_HOUR, minute=0, second=0, microsecond=0)
+            cursor = align_to_granularity(cursor)
+            continue
+        candidates.append((cursor, cursor + duration))
+        cursor += timedelta(minutes=SLOT_GRANULARITY_MINUTES)
+        cursor = align_to_granularity(cursor)
+
+    return candidates
+
+
+class SchedulingService:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+        self.tasks = TaskRepository(session)
+        self.calendar = GoogleCalendarService(session)
+
+    async def suggest_blocks(
+        self,
+        *,
+        user_id: UUID,
+        task_id: UUID,
+        duration_minutes: int | None = None,
+        time_min: datetime | None = None,
+        time_max: datetime | None = None,
+        max_results: int = 3,
+    ) -> tuple[int, list[SuggestedBlock]]:
+        task = await self.tasks.get_for_user(task_id=task_id, user_id=user_id)
+        if task is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found.")
+        if task.deleted_at is not None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found.")
+
+        duration = duration_minutes or task.estimated_duration_minutes or 30
+        if not 1 <= duration <= 1440:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid duration.")
+
+        now = datetime.now(timezone.utc)
+        window_start = time_min or now
+        window_end = time_max or (now + timedelta(days=7))
+        if window_end <= window_start:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="time_max must be after time_min.")
+        if (window_end - window_start) > timedelta(days=30):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Window too large (max 30 days).")
+
+        # Normalize to UTC
+        if window_start.tzinfo is None:
+            window_start = window_start.replace(tzinfo=timezone.utc)
+        if window_end.tzinfo is None:
+            window_end = window_end.replace(tzinfo=timezone.utc)
+
+        raw_busy = await self.calendar.fetch_freebusy(user_id, window_start, window_end)
+        busy_intervals = _parse_busy_intervals(raw_busy)
+        slots = find_free_slots(
+            busy=busy_intervals,
+            time_min=window_start,
+            time_max=window_end,
+            duration=timedelta(minutes=duration),
+            max_results=max_results,
+        )
+
+        blocks = [
+            SuggestedBlock(
+                suggested_start_at=start,
+                suggested_end_at=end,
+                reason={"kind": "freebusy_gap", "duration_minutes": duration},
+            )
+            for start, end in slots
+        ]
+        return duration, blocks
+
+    async def create_block(
+        self,
+        *,
+        user_id: UUID,
+        task_id: UUID,
+        suggested_start_at: datetime,
+        suggested_end_at: datetime,
+        suggestion_reason: dict | None = None,
+    ) -> TaskCalendarBlock:
+        task = await self.tasks.get_for_user(task_id=task_id, user_id=user_id)
+        if task is None or task.deleted_at is not None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found.")
+        if suggested_end_at <= suggested_start_at:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="suggested_end_at must be after suggested_start_at.")
+        connection = await self.calendar.get_connection(user_id)
+        if not connection or connection.status != "active":
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No active calendar connection. Connect Google Calendar first.")
+        block = TaskCalendarBlock(
+            user_id=user_id,
+            task_id=task_id,
+            calendar_connection_id=connection.id,
+            status=TaskCalendarBlockStatus.SUGGESTED,
+            suggested_start_at=suggested_start_at,
+            suggested_end_at=suggested_end_at,
+            suggestion_reason=suggestion_reason or {"kind": "manual_suggest", "duration_minutes": int((suggested_end_at - suggested_start_at).total_seconds() // 60)},
+        )
+        self.session.add(block)
+        await self.session.commit()
+        await self.session.refresh(block)
+        return block
+
+    async def list_blocks(self, *, user_id: UUID, task_id: UUID) -> list[TaskCalendarBlock]:
+        task = await self.tasks.get_for_user(task_id=task_id, user_id=user_id)
+        if task is None or task.deleted_at is not None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found.")
+        result = await self.session.scalars(select(TaskCalendarBlock).where(TaskCalendarBlock.user_id == user_id, TaskCalendarBlock.task_id == task_id).order_by(TaskCalendarBlock.created_at.desc()))
+        return list(result.all())
+
+    async def confirm_block(self, *, user_id: UUID, task_id: UUID, block_id: UUID) -> TaskCalendarBlock:
+        task = await self.tasks.get_for_user(task_id=task_id, user_id=user_id)
+        if task is None or task.deleted_at is not None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found.")
+        block = await self.session.scalar(select(TaskCalendarBlock).where(TaskCalendarBlock.id == block_id, TaskCalendarBlock.user_id == user_id, TaskCalendarBlock.task_id == task_id))
+        if block is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Calendar block not found.")
+        if block.status == TaskCalendarBlockStatus.CONFIRMED:
+            return block
+        if block.status == TaskCalendarBlockStatus.CANCELED:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Block was canceled.")
+        connection = await self.calendar.get_connection(user_id)
+        if not connection or connection.status != "active":
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No active calendar connection. Connect Google Calendar first.")
+        # Mark intent before external call
+        block.status = TaskCalendarBlockStatus.PENDING_WRITE
+        block.write_requested_at = datetime.now(timezone.utc)
+        block.approved_at = datetime.now(timezone.utc)
+        block.calendar_connection_id = connection.id
+        await self.session.commit()
+        await self.session.refresh(block)
+        try:
+            event = await self.calendar.create_calendar_event(user_id, task.title, block.suggested_start_at, block.suggested_end_at)
+        except HTTPException as exc:
+            block.status = TaskCalendarBlockStatus.WRITE_FAILED
+            block.last_error_message = str(exc.detail)[:500]
+            await self.session.commit()
+            await self.session.refresh(block)
+            raise
+        block.status = TaskCalendarBlockStatus.CONFIRMED
+        block.write_completed_at = datetime.now(timezone.utc)
+        block.last_error_message = None
+        # Persist external event id if returned; store in suggestion_reason for now (calendar_event_id stays nullable until events table sync)
+        if isinstance(event, dict) and event.get("id"):
+            block.suggestion_reason = {**block.suggestion_reason, "external_event_id": event["id"]}
+        await self.session.commit()
+        await self.session.refresh(block)
+        # Update task to scheduled with block start time (explicit user approval path)
+        suggested_start = block.suggested_start_at
+        if suggested_start.tzinfo is None:
+            suggested_start = suggested_start.replace(tzinfo=timezone.utc)
+        task.due_at = suggested_start
+        if task.status not in (TaskStatus.COMPLETED, TaskStatus.ARCHIVED):
+            if suggested_start <= datetime.now(timezone.utc):
+                task.status = TaskStatus.DUE_NOW
+            else:
+                task.status = TaskStatus.SCHEDULED
+            if task.status == TaskStatus.COMPLETED:
+                task.completed_at = task.completed_at or datetime.now(timezone.utc)
+        await self.session.commit()
+        await self.session.refresh(task)
+        return block

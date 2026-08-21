@@ -19,12 +19,17 @@ import {
   type AuthSession,
 } from "./src/lib/auth";
 import {
+  confirmTaskCalendarBlock,
+  createTaskCalendarBlock,
   createTask,
   deleteTask,
+  getCalendarStatus,
   structureCapture,
   describeTaskError,
   listTasks,
+  suggestBlocks,
   tasksRuntime,
+  type SuggestedBlock,
   type Task,
   updateTask,
 } from "./src/lib/tasks";
@@ -165,8 +170,11 @@ export default function App() {
   const [taskEditorPriority, setTaskEditorPriority] = useState<Task["priority"]>("medium");
   const [taskEditorDuration, setTaskEditorDuration] = useState("");
   const [activeTaskAction, setActiveTaskAction] = useState<
-    "complete" | "reopen" | "delete" | "schedule" | "unschedule" | "edit" | null
+    "complete" | "reopen" | "delete" | "schedule" | "unschedule" | "edit" | "suggest" | null
   >(null);
+  const [suggestTaskId, setSuggestTaskId] = useState<string | null>(null);
+  const [suggestionsByTask, setSuggestionsByTask] = useState<Record<string, SuggestedBlock[]>>({});
+  const [calendarStatus, setCalendarStatus] = useState<string | null>(null);
 
   async function loadTasks({ silent = false }: { silent?: boolean } = {}) {
     if (!silent) {
@@ -216,6 +224,28 @@ export default function App() {
     }, 30_000);
 
     return () => clearInterval(intervalId);
+  }, [authSession]);
+
+  useEffect(() => {
+    if (!tasksRuntime.isApiMode || authSession === null) {
+      setCalendarStatus(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const status = await getCalendarStatus();
+        if (!cancelled) setCalendarStatus(status);
+      } catch {
+        if (!cancelled) setCalendarStatus("unknown");
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [authSession]);
 
   function replaceTask(nextTask: Task) {
@@ -493,6 +523,85 @@ export default function App() {
     }
   }
 
+  async function handleSuggestBlocks(task: Task) {
+    const isTogglingOff = suggestTaskId === task.id;
+    if (isTogglingOff) {
+      setSuggestTaskId(null);
+      return;
+    }
+
+    setActiveTaskId(task.id);
+    setActiveTaskAction("suggest");
+    setErrorMessage(null);
+    setSuggestTaskId(task.id);
+
+    try {
+      const result = await suggestBlocks(task.id, { max_results: 3 });
+      setSuggestionsByTask((prev) => ({ ...prev, [task.id]: result.suggestions }));
+      if (result.suggestions.length === 0) {
+        setErrorMessage("No free calendar gaps found in the next 7 days for this duration.");
+      }
+    } catch (error) {
+      setSuggestionsByTask((prev) => ({ ...prev, [task.id]: [] }));
+      setErrorMessage(describeTaskError(error));
+    } finally {
+      setActiveTaskId(null);
+      setActiveTaskAction(null);
+    }
+  }
+
+  async function handleApplySuggestion(task: Task, block: SuggestedBlock) {
+    setActiveTaskId(task.id);
+    setActiveTaskAction("schedule");
+    setErrorMessage(null);
+
+    try {
+      // Try explicit calendar block path first (user-approved Google write) if calendar is connected
+      if (tasksRuntime.isApiMode && calendarStatus === "active") {
+        try {
+          const created = await createTaskCalendarBlock(task.id, block);
+          await confirmTaskCalendarBlock(task.id, created.id);
+          // After confirm, backend already moved task to scheduled/due_now; refresh from server
+          const refreshed = await listTasks();
+          const updated = refreshed.find((t) => t.id === task.id);
+          if (updated) replaceTask(updated);
+          else {
+            const nextTask = await updateTask(task.id, { status: "scheduled", due_at: block.suggested_start_at });
+            replaceTask(nextTask);
+          }
+          if (activeTaskFilter !== "all" && updated && activeTaskFilter !== updated.status) {
+            setActiveTaskFilter(updated.status);
+          }
+          setScheduleEditorTaskId(null);
+          setScheduleEditorValue("");
+          setSuggestTaskId(null);
+          return;
+        } catch (blockError) {
+          // Fall back to direct schedule if block/confirm fails (e.g., not_connected)
+          const msg = describeTaskError(blockError);
+          if (!msg.toLowerCase().includes("calendar")) {
+            throw blockError;
+          }
+          // else fall through to direct PATCH
+        }
+      }
+
+      const nextTask = await updateTask(task.id, { status: "scheduled", due_at: block.suggested_start_at });
+      replaceTask(nextTask);
+      if (activeTaskFilter !== "all" && activeTaskFilter !== nextTask.status) {
+        setActiveTaskFilter(nextTask.status);
+      }
+      setScheduleEditorTaskId(null);
+      setScheduleEditorValue("");
+      setSuggestTaskId(null);
+    } catch (error) {
+      setErrorMessage(describeTaskError(error));
+    } finally {
+      setActiveTaskId(null);
+      setActiveTaskAction(null);
+    }
+  }
+
   function renderTaskCard(task: Task) {
     const isBusy = activeTaskId === task.id;
     const isEditingSchedule = scheduleEditorTaskId === task.id;
@@ -746,6 +855,52 @@ export default function App() {
             </Text>
           </Pressable>
         </View>
+
+        {task.status !== "completed" && task.status !== "archived" ? (
+          <View style={styles.suggestRow}>
+            <Pressable
+              style={[
+                styles.taskActionButton,
+                styles.suggestButton,
+                isBusy ? styles.buttonDisabled : null,
+              ]}
+              onPress={() => void handleSuggestBlocks(task)}
+              disabled={isBusy}
+            >
+              <Text style={[styles.taskActionButtonText, styles.suggestButtonText]}>
+                {isBusy && activeTaskAction === "suggest"
+                  ? "Finding..."
+                  : suggestTaskId === task.id
+                    ? "Hide suggestions"
+                    : "Suggest times"}
+              </Text>
+            </Pressable>
+          </View>
+        ) : null}
+
+        {suggestTaskId === task.id ? (
+          <View style={styles.suggestionList}>
+            {(suggestionsByTask[task.id] ?? []).length === 0 ? (
+              <Text style={styles.suggestionEmpty}>No suggestions loaded yet. Tap Suggest times again.</Text>
+            ) : (
+              (suggestionsByTask[task.id] ?? []).map((block) => (
+                <View key={block.suggested_start_at} style={styles.suggestionCard}>
+                  <Text style={styles.suggestionTime}>{formatTaskTime(block.suggested_start_at)}</Text>
+                  <Text style={styles.suggestionTimeSmall}>→ {formatTaskTime(block.suggested_end_at)}</Text>
+                  <Pressable
+                    style={[styles.taskActionButton, styles.scheduleButton, isBusy ? styles.buttonDisabled : null]}
+                    onPress={() => void handleApplySuggestion(task, block)}
+                    disabled={isBusy}
+                  >
+                    <Text style={[styles.taskActionButtonText, styles.scheduleButtonText]}>
+                      {isBusy && activeTaskAction === "schedule" ? "Scheduling..." : "Schedule here"}
+                    </Text>
+                  </Pressable>
+                </View>
+              ))
+            )}
+          </View>
+        ) : null}
       </View>
     );
   }
@@ -780,9 +935,14 @@ export default function App() {
               </Text>
               <Text style={styles.modeBody}>Base URL: {tasksRuntime.apiBaseUrl}</Text>
               {tasksRuntime.isApiMode && authSession ? (
-                <Text style={styles.modeBody}>
-                  Signed in as {authSession.user.email ?? authSession.user.id}
-                </Text>
+                <>
+                  <Text style={styles.modeBody}>
+                    Signed in as {authSession.user.email ?? authSession.user.id}
+                  </Text>
+                  <Text style={styles.modeBody}>
+                    Calendar: {calendarStatus ?? "checking..."}
+                  </Text>
+                </>
               ) : null}
             </View>
 
@@ -1491,5 +1651,45 @@ const styles = StyleSheet.create({
   },
   secondaryTaskButtonText: {
     color: "#27443E",
+  },
+  suggestButton: {
+    backgroundColor: "#DCE8F5",
+  },
+  suggestButtonText: {
+    color: "#2A4A6B",
+  },
+  suggestRow: {
+    flexDirection: "row",
+    marginTop: 2,
+  },
+  suggestionList: {
+    gap: 10,
+    marginTop: 6,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: "#E4D5BD",
+  },
+  suggestionEmpty: {
+    color: "#6A6258",
+    fontSize: 13,
+    fontStyle: "italic",
+  },
+  suggestionCard: {
+    backgroundColor: "#F6EFE1",
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: "#E2D8C3",
+    gap: 6,
+  },
+  suggestionTime: {
+    color: "#1D2A2C",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  suggestionTimeSmall: {
+    color: "#415255",
+    fontSize: 13,
   },
 });
