@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from sqlalchemy import select
 
-from app.models.calendar_connection import TaskCalendarBlock, TaskCalendarBlockStatus
+from app.models.calendar_connection import Reminder, ReminderStatus, ReminderType, TaskCalendarBlock, TaskCalendarBlockStatus
 from app.models.task import TaskStatus
 from app.repositories.tasks import TaskRepository
 from app.schemas.calendar import SuggestedBlock
@@ -272,4 +272,56 @@ class SchedulingService:
                 task.completed_at = task.completed_at or datetime.now(timezone.utc)
         await self.session.commit()
         await self.session.refresh(task)
+        # Create scheduled_block reminder + ensure due_date reminder via task sync
+        await self._ensure_block_reminder(task, block)
         return block
+
+    async def _ensure_block_reminder(self, task, block: TaskCalendarBlock) -> None:
+        # Cancel existing scheduled_block pending for this block
+        existing = await self.session.scalars(
+            select(Reminder).where(
+                Reminder.user_id == task.user_id,
+                Reminder.task_calendar_block_id == block.id,
+                Reminder.type == ReminderType.SCHEDULED_BLOCK,
+                Reminder.status.in_([ReminderStatus.PENDING, ReminderStatus.SCHEDULED]),
+            )
+        )
+        for r in existing.all():
+            r.status = ReminderStatus.CANCELED
+        # Create new reminder at block start (or 10 min before if future)
+        suggested_start = block.suggested_start_at
+        if suggested_start.tzinfo is None:
+            suggested_start = suggested_start.replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        scheduled_for = suggested_start - timedelta(minutes=10) if suggested_start > now + timedelta(minutes=15) else suggested_start
+        reminder = Reminder(
+            user_id=task.user_id,
+            task_id=task.id,
+            task_calendar_block_id=block.id,
+            type=ReminderType.SCHEDULED_BLOCK,
+            scheduled_for=scheduled_for,
+            status=ReminderStatus.PENDING,
+        )
+        self.session.add(reminder)
+        # Also ensure due_date reminder exists for task
+        existing_due = await self.session.scalars(
+            select(Reminder).where(
+                Reminder.user_id == task.user_id,
+                Reminder.task_id == task.id,
+                Reminder.task_calendar_block_id.is_(None),
+                Reminder.type == ReminderType.DUE_DATE,
+                Reminder.status.in_([ReminderStatus.PENDING, ReminderStatus.SCHEDULED]),
+            )
+        )
+        # Cancel stale due_date and recreate at same time as block
+        for r in existing_due.all():
+            r.status = ReminderStatus.CANCELED
+        due_reminder = Reminder(
+            user_id=task.user_id,
+            task_id=task.id,
+            type=ReminderType.DUE_DATE,
+            scheduled_for=scheduled_for,
+            status=ReminderStatus.PENDING,
+        )
+        self.session.add(due_reminder)
+        await self.session.commit()

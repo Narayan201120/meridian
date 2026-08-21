@@ -21,6 +21,19 @@ class TaskCalendarBlockStatus(StrEnum):
     CANCELED = "canceled"
 
 
+class ReminderType(StrEnum):
+    DUE_DATE = "due_date"
+    SCHEDULED_BLOCK = "scheduled_block"
+
+
+class ReminderStatus(StrEnum):
+    PENDING = "pending"
+    SCHEDULED = "scheduled"
+    SENT = "sent"
+    FAILED = "failed"
+    CANCELED = "canceled"
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -71,6 +84,32 @@ class TaskCalendarBlock(Base):
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     write_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     write_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow, server_default=text("CURRENT_TIMESTAMP"))
+
+
+class Reminder(Base):
+    __tablename__ = "reminders"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4, server_default=text("gen_random_uuid()"))
+    user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
+    task_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    task_calendar_block_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    type: Mapped[ReminderType] = mapped_column(
+        SqlEnum(ReminderType, name="reminder_type", native_enum=True, create_type=False, values_callable=_enum_values),
+        nullable=False,
+    )
+    scheduled_for: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[ReminderStatus] = mapped_column(
+        SqlEnum(ReminderStatus, name="reminder_status", native_enum=True, create_type=False, values_callable=_enum_values),
+        nullable=False,
+        default=ReminderStatus.PENDING,
+        server_default=ReminderStatus.PENDING.value,
+    )
+    delivery_channel: Mapped[str] = mapped_column(Text, nullable=False, default="push")
+    local_only: Mapped[bool] = mapped_column(nullable=False, default=False)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error_message: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow, server_default=text("CURRENT_TIMESTAMP"))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow, server_default=text("CURRENT_TIMESTAMP"))

@@ -1,9 +1,12 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sqlalchemy import select
+
+from app.models.calendar_connection import Reminder, ReminderStatus, ReminderType
 from app.models.task import Task, TaskPriority, TaskSource, TaskStatus, ScheduleIntent
 from app.models.task_mutation_log import MutationKind, TaskMutationLog
 from app.repositories.tasks import TaskRepository
@@ -75,6 +78,7 @@ class TaskService:
         )
 
         await self.session.commit()
+        await self._sync_due_date_reminder(task)
         return await self.repository.refresh(task)
 
     async def get_task(self, *, user_id: UUID, task_id: UUID) -> Task:
@@ -114,6 +118,7 @@ class TaskService:
         )
 
         await self.session.commit()
+        await self._sync_due_date_reminder(task)
         return await self.repository.refresh(task)
 
     async def delete_task(
@@ -225,6 +230,52 @@ class TaskService:
         if isinstance(value, dict):
             return value
         return value
+
+    async def _sync_due_date_reminder(self, task: Task) -> None:
+        # Cancel or create due_date reminder based on task state
+        existing = await self.session.scalars(
+            select(Reminder).where(
+                Reminder.user_id == task.user_id,
+                Reminder.task_id == task.id,
+                Reminder.type == ReminderType.DUE_DATE,
+                Reminder.status.in_([ReminderStatus.PENDING, ReminderStatus.SCHEDULED]),
+            )
+        )
+        existing_list = list(existing.all())
+        should_have = task.deleted_at is None and task.status in (TaskStatus.SCHEDULED, TaskStatus.DUE_NOW) and task.due_at is not None
+        if not should_have:
+            for r in existing_list:
+                r.status = ReminderStatus.CANCELED
+            if existing_list:
+                await self.session.commit()
+            return
+        # Ensure due_at is aware
+        due_at = task.due_at
+        if due_at is not None and due_at.tzinfo is None:
+            due_at = due_at.replace(tzinfo=timezone.utc)
+        # Schedule 10 min before due_at if future enough, else at due_at
+        now = self._utcnow()
+        scheduled_for = due_at - timedelta(minutes=10) if due_at and due_at > now + timedelta(minutes=15) else due_at
+        if scheduled_for is None or scheduled_for.tzinfo is None:
+            scheduled_for = scheduled_for.replace(tzinfo=timezone.utc) if scheduled_for else now
+        # If existing matches scheduled_for within 1 min, keep
+        for r in existing_list:
+            existing_for = r.scheduled_for
+            if existing_for and existing_for.tzinfo is None:
+                existing_for = existing_for.replace(tzinfo=timezone.utc)
+            if existing_for and abs((existing_for - scheduled_for).total_seconds()) < 60:
+                return
+            r.status = ReminderStatus.CANCELED
+        # Create new
+        reminder = Reminder(
+            user_id=task.user_id,
+            task_id=task.id,
+            type=ReminderType.DUE_DATE,
+            scheduled_for=scheduled_for,
+            status=ReminderStatus.PENDING,
+        )
+        self.session.add(reminder)
+        await self.session.commit()
 
     @staticmethod
     def _utcnow() -> datetime:

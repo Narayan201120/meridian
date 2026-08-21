@@ -194,3 +194,78 @@ async def test_confirm_block_not_found(client, db_session):
     fake_block = str(uuid.uuid4())
     resp = await client.post(f"/api/v1/tasks/{task_id}/blocks/{fake_block}/confirm")
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_scheduled_task_creates_due_date_reminder(client, db_session):
+    from uuid import UUID
+
+    from sqlalchemy import select
+
+    from app.models import Reminder
+
+    future = datetime.now(timezone.utc) + timedelta(days=2)
+    future = future.replace(minute=0, second=0, microsecond=0)
+    resp = await client.post("/api/v1/tasks", json={"title": "Remind me", "status": "scheduled", "due_at": future.isoformat()})
+    assert resp.status_code == 201, resp.text
+    task_id = UUID(resp.json()["id"])
+    # reminder should exist
+    reminders = await db_session.scalars(select(Reminder).where(Reminder.task_id == task_id))
+    items = list(reminders.all())
+    assert len(items) == 1
+    assert items[0].type == "due_date"
+    assert items[0].status in ("pending", "scheduled")
+
+
+@pytest.mark.asyncio
+async def test_confirm_block_creates_scheduled_block_reminder(client, db_session):
+    from uuid import UUID
+
+    from sqlalchemy import select
+
+    from app.models import CalendarConnection, Reminder
+
+    create_resp = await client.post("/api/v1/tasks", json={"title": "Block remind"})
+    task_id = create_resp.json()["id"]
+    task_user_id = UUID(create_resp.json()["user_id"])
+    conn = CalendarConnection(user_id=task_user_id, provider="google", provider_account_id="primary", status="active")
+    db_session.add(conn)
+    await db_session.commit()
+    start = datetime.now(timezone.utc) + timedelta(days=1, hours=4)
+    start = start.replace(minute=0, second=0, microsecond=0)
+    end = start + timedelta(minutes=30)
+    block_resp = await client.post(f"/api/v1/tasks/{task_id}/blocks", json={"suggested_start_at": start.isoformat(), "suggested_end_at": end.isoformat()})
+    block_id = block_resp.json()["id"]
+    with patch("app.services.scheduling.GoogleCalendarService.create_calendar_event", new_callable=AsyncMock) as mock_create:
+        mock_create.return_value = {"id": "evt_remind", "status": "confirmed"}
+        resp = await client.post(f"/api/v1/tasks/{task_id}/blocks/{block_id}/confirm")
+        assert resp.status_code == 200
+    # should have both due_date and scheduled_block reminders
+    rems = await db_session.scalars(select(Reminder).where(Reminder.task_id == UUID(task_id)))
+    items = list(rems.all())
+    types = {r.type for r in items}
+    assert "due_date" in types
+    assert "scheduled_block" in types
+    assert any(r.task_calendar_block_id is not None for r in items)
+
+
+@pytest.mark.asyncio
+async def test_unschedule_cancels_reminder(client, db_session):
+    from uuid import UUID
+
+    from sqlalchemy import select
+
+    from app.models import Reminder
+
+    future = datetime.now(timezone.utc) + timedelta(days=2)
+    future = future.replace(minute=0, second=0, microsecond=0)
+    resp = await client.post("/api/v1/tasks", json={"title": "Cancel remind", "status": "scheduled", "due_at": future.isoformat()})
+    task_id = UUID(resp.json()["id"])
+    # unschedule
+    resp2 = await client.patch(f"/api/v1/tasks/{task_id}", json={"status": "inbox", "due_at": None})
+    assert resp2.status_code == 200
+    rems = await db_session.scalars(select(Reminder).where(Reminder.task_id == task_id, Reminder.status == "pending"))
+    assert len(list(rems.all())) == 0
+    # should have canceled
+    all_rems = await db_session.scalars(select(Reminder).where(Reminder.task_id == task_id))
+    assert any(r.status == "canceled" for r in all_rems.all())
