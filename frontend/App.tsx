@@ -20,6 +20,7 @@ import {
 } from "./src/lib/auth";
 import {
   acknowledgeReminder,
+  captureVoice,
   confirmTaskCalendarBlock,
   createTaskCalendarBlock,
   createTask,
@@ -183,6 +184,9 @@ export default function App() {
   const [remindersByTask, setRemindersByTask] = useState<Record<string, Reminder[]>>({});
   const [pendingReminders, setPendingReminders] = useState<Reminder[]>([]);
   const [dispatchNotice, setDispatchNotice] = useState<string | null>(null);
+  const [voiceTranscript, setVoiceTranscript] = useState("");
+  const [isVoiceCapturing, setIsVoiceCapturing] = useState(false);
+  const [voiceResult, setVoiceResult] = useState<string | null>(null);
 
   async function loadRemindersForTasks(nextTasks: Task[]) {
     if (!tasksRuntime.isApiMode || authSession === null) return;
@@ -345,6 +349,27 @@ export default function App() {
       setErrorMessage(describeTaskError(error));
     } finally {
       setIsStructuring(false);
+    }
+  }
+
+  async function handleVoiceCapture() {
+    if (!voiceTranscript.trim()) {
+      setErrorMessage("Add a voice transcript before capturing.");
+      return;
+    }
+    setIsVoiceCapturing(true);
+    setErrorMessage(null);
+    setVoiceResult(null);
+    try {
+      const res = await captureVoice(voiceTranscript, true);
+      setVoiceResult(`Captured "${res.suggestion.title}"` + (res.task_id ? ` → task ${res.task_id.slice(0, 8)}` : ""));
+      setVoiceTranscript("");
+      // refresh tasks to show new voice task
+      void loadTasks({ silent: true });
+    } catch (error) {
+      setErrorMessage(describeTaskError(error));
+    } finally {
+      setIsVoiceCapturing(false);
     }
   }
 
@@ -1212,6 +1237,28 @@ export default function App() {
                         : "Add task"}
                   </Text>
                 </Pressable>
+              </View>
+
+              <View style={styles.card}>
+                <Text style={styles.cardEyebrow}>Voice capture</Text>
+                <Text style={styles.sectionTitle}>Speak it, keep it</Text>
+                <Text style={styles.sectionBody}>Paste a transcript (future: mic) — it will be structured and saved as a voice task. Never auto-writes calendar.</Text>
+                <TextInput
+                  placeholder="Voice transcript (e.g., Urgent: record demo video, needs 30 minutes)"
+                  placeholderTextColor="#7D7A70"
+                  style={[styles.input, styles.notesInput]}
+                  value={voiceTranscript}
+                  onChangeText={setVoiceTranscript}
+                  multiline
+                />
+                <Pressable
+                  style={[styles.primaryButton, isVoiceCapturing ? styles.buttonDisabled : null]}
+                  onPress={() => void handleVoiceCapture()}
+                  disabled={isVoiceCapturing}
+                >
+                  <Text style={styles.primaryButtonText}>{isVoiceCapturing ? "Capturing voice..." : "Capture voice → Create task"}</Text>
+                </Pressable>
+                {voiceResult ? <Text style={styles.metaText}>{voiceResult}</Text> : null}
               </View>
 
               {errorMessage ? (

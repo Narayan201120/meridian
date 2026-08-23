@@ -10,7 +10,7 @@ from sqlalchemy.pool import StaticPool
 from app.db.base import Base
 from app.db.session import get_db_session
 from app.main import app as fastapi_app
-from app.models import CalendarConnection, NotificationDelivery, Reminder, Task, TaskCalendarBlock, TaskMutationLog  # noqa: F401 - needed to register models
+from app.models import CalendarConnection, NotificationDelivery, Reminder, Task, TaskCalendarBlock, TaskMutationLog, VoiceCapture  # noqa: F401 - needed to register models
 
 
 TEST_USER_ID = uuid4()

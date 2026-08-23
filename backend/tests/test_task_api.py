@@ -275,3 +275,71 @@ async def test_structure_capture_rejects_blank_text(client: AsyncClient) -> None
     response = await client.post("/api/v1/captures/structure", json={"text": "   "})
 
     assert response.status_code == 422
+
+
+async def test_voice_capture_creates_task(client: AsyncClient, db_session) -> None:
+    from app.models import VoiceCapture
+
+    response = await client.post(
+        "/api/v1/captures/voice",
+        json={"transcript": "Urgent: record the demo video\nNeeds 30 minutes", "create_task": True},
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["transcript"] == "Urgent: record the demo video\nNeeds 30 minutes"
+    assert data["suggestion"]["priority"] == "high"
+    assert data["suggestion"]["estimated_duration_minutes"] == 30
+    assert data["task_id"] is not None
+    # verify voice capture stored
+    from sqlalchemy import select
+    from uuid import UUID
+
+    vc = await db_session.scalar(select(VoiceCapture).where(VoiceCapture.id == UUID(data["voice_capture_id"])))
+    assert vc is not None
+    assert vc.transcript == "Urgent: record the demo video\nNeeds 30 minutes"
+    assert vc.task_id is not None
+    # verify task created with source voice
+    task = await db_session.get(Task, UUID(data["task_id"]))
+    assert task is not None
+    assert task.source.value == "voice"
+    assert task.title == "Urgent: record the demo video"
+
+
+async def test_voice_capture_without_task_creation(client: AsyncClient, db_session) -> None:
+    from app.models import VoiceCapture
+
+    response = await client.post(
+        "/api/v1/captures/voice",
+        json={"transcript": "Someday clean the garage", "create_task": False},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["task_id"] is None
+    assert data["suggestion"]["priority"] == "low"
+    from sqlalchemy import select
+    from uuid import UUID
+
+    vc = await db_session.scalar(select(VoiceCapture).where(VoiceCapture.id == UUID(data["voice_capture_id"])))
+    assert vc.task_id is None
+
+
+async def test_voice_capture_requires_auth(unauthenticated_client: AsyncClient) -> None:
+    response = await unauthenticated_client.post("/api/v1/captures/voice", json={"transcript": "hello"})
+    assert response.status_code in (401, 403)
+
+
+async def test_voice_capture_never_creates_calendar_block(client: AsyncClient, db_session) -> None:
+    # voice should not auto-create calendar blocks; check no blocks created
+    from app.models import TaskCalendarBlock
+
+    response = await client.post(
+        "/api/v1/captures/voice",
+        json={"transcript": "Block 2 hours on my calendar for deep work video"},
+    )
+    assert response.status_code == 200
+    task_id = response.json()["task_id"]
+    from sqlalchemy import select
+    from uuid import UUID
+
+    blocks = await db_session.scalars(select(TaskCalendarBlock).where(TaskCalendarBlock.task_id == UUID(task_id)))
+    assert len(list(blocks.all())) == 0

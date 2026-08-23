@@ -41,6 +41,14 @@ class NotificationDeliveryStatus(StrEnum):
     ACKNOWLEDGED = "acknowledged"
 
 
+class VoiceCaptureStatus(StrEnum):
+    PENDING_UPLOAD = "pending_upload"
+    UPLOADED = "uploaded"
+    TRANSCRIBED = "transcribed"
+    FAILED = "failed"
+    DISCARDED = "discarded"
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -140,5 +148,25 @@ class NotificationDelivery(Base):
     attempted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow, server_default=text("CURRENT_TIMESTAMP"))
+
+
+class VoiceCapture(Base):
+    __tablename__ = "voice_captures"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4, server_default=text("gen_random_uuid()"))
+    user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
+    task_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    status: Mapped[VoiceCaptureStatus] = mapped_column(
+        SqlEnum(VoiceCaptureStatus, name="voice_capture_status", native_enum=True, create_type=False, values_callable=_enum_values),
+        nullable=False,
+        default=VoiceCaptureStatus.TRANSCRIBED,
+        server_default=VoiceCaptureStatus.TRANSCRIBED.value,
+    )
+    storage_path: Mapped[str | None] = mapped_column(Text)
+    transcript: Mapped[str | None] = mapped_column(Text)
+    transcript_provider: Mapped[str | None] = mapped_column(Text)
+    retention_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow, server_default=text("CURRENT_TIMESTAMP"))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow, server_default=text("CURRENT_TIMESTAMP"))

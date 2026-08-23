@@ -551,6 +551,44 @@ export async function listAllReminders(status?: string): Promise<Reminder[]> {
   return (await response.json()) as Reminder[];
 }
 
+export type VoiceCaptureResponse = {
+  voice_capture_id: string;
+  transcript: string;
+  suggestion: CaptureSuggestion;
+  task_id: string | null;
+};
+
+export async function captureVoice(transcript: string, createTaskFlag = true): Promise<VoiceCaptureResponse> {
+  const normalized = transcript.trim();
+  if (!normalized) throw new Error("Transcript cannot be blank.");
+  if (!tasksRuntime.isApiMode) {
+    const suggestion: CaptureSuggestion = {
+      title: normalized.split(/\r?\n/)[0] ?? normalized,
+      notes: normalized.split(/\r?\n/).slice(1).join("\n") || null,
+      priority: /urgent|asap|critical|important/.test(normalized.toLowerCase()) ? "high" : "medium",
+      estimated_duration_minutes: null,
+      schedule_intent: "none",
+      parser: "heuristic_v1",
+    };
+    let taskId: string | null = null;
+    if (createTaskFlag) {
+      const t = await createTask({ title: suggestion.title, notes: suggestion.notes ?? undefined, priority: suggestion.priority });
+      taskId = t.id;
+    }
+    return { voice_capture_id: `demo-vc-${Date.now()}`, transcript: normalized, suggestion, task_id: taskId };
+  }
+  const response = await fetch(`${tasksRuntime.apiBaseUrl}/captures/voice`, {
+    method: "POST",
+    headers: buildApiHeaders("application/json"),
+    body: JSON.stringify({ transcript: normalized, create_task: createTaskFlag }),
+  });
+  if (!response.ok) {
+    const detail = await readErrorDetail(response);
+    throw new Error(detail || `Failed to capture voice (${response.status})`);
+  }
+  return (await response.json()) as VoiceCaptureResponse;
+}
+
 export function describeTaskError(error: unknown): string {
   if (!tasksRuntime.isApiMode) {
     return extractErrorMessage(error);
