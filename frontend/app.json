@@ -10,6 +10,9 @@
     "web": {
       "bundler": "metro"
     },
+    "extra": {
+      "nativewind": true
+    },
     "plugins": [
       "expo-router"
     ]
