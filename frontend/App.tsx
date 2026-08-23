@@ -9,7 +9,9 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaProvider } from "react-native-safe-area-context";
+import { Card } from "./src/components/ui/Card";
+import { PageShell } from "./src/components/ui/PageShell";
 
 import {
   authRuntime,
@@ -1078,19 +1080,18 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
-      <SafeAreaView style={styles.safeArea}>
-        <StatusBar barStyle="dark-content" />
-        <ScrollView contentContainerStyle={styles.container}>
-          <View style={styles.hero}>
+      <StatusBar barStyle="dark-content" />
+      <PageShell>
+          <Card variant="hero">
             <Text style={styles.kicker}>Meridian</Text>
             <Text style={styles.title}>Capture a task, then give it somewhere real to go.</Text>
             <Text style={styles.subtitle}>
               This is the first live task flow. In demo mode it runs locally. In API mode it talks
               to the FastAPI backend with a real Supabase bearer token.
             </Text>
-          </View>
+          </Card>
 
-          <View style={styles.modeCard}>
+          <Card variant="floating">
             <View>
               <Text style={styles.cardEyebrow}>
                 {tasksRuntime.isApiMode ? "API mode" : "Demo mode"}
@@ -1148,10 +1149,10 @@ export default function App() {
                 </Text>
               </Pressable>
             )}
-          </View>
+          </Card>
 
           {tasksRuntime.isApiMode && authSession === null ? (
-            <View style={styles.card}>
+            <Card variant="floating">
               <Text style={styles.cardEyebrow}>Sign in</Text>
               <Text style={styles.sectionTitle}>Use your Supabase user</Text>
               <Text style={styles.sectionBody}>
@@ -1186,10 +1187,11 @@ export default function App() {
                   {isSigningIn ? "Signing in..." : "Sign in"}
                 </Text>
               </Pressable>
-            </View>
+            </Card>
+
           ) : (
             <>
-              <View style={styles.card}>
+              <Card variant="floating">
                 <Text style={styles.cardEyebrow}>Create task</Text>
                 <Text style={styles.sectionTitle}>Add something real</Text>
                 <Text style={styles.sectionBody}>
@@ -1297,9 +1299,9 @@ export default function App() {
                         : "Add task"}
                   </Text>
                 </Pressable>
-              </View>
+              </Card>
 
-              <View style={styles.card}>
+              <Card variant="floating">
                 <Text style={styles.cardEyebrow}>Voice capture</Text>
                 <Text style={styles.sectionTitle}>Speak it, keep it</Text>
                 <Text style={styles.sectionBody}>Paste a transcript (future: mic) — it will be structured and saved as a voice task. Never auto-writes calendar.</Text>
@@ -1319,7 +1321,7 @@ export default function App() {
                   <Text style={styles.primaryButtonText}>{isVoiceCapturing ? "Capturing voice..." : "Capture voice → Create task"}</Text>
                 </Pressable>
                 {voiceResult ? <Text style={styles.metaText}>{voiceResult}</Text> : null}
-              </View>
+              </Card>
 
               {errorMessage ? (
                 <View style={styles.errorCard}>
@@ -1343,7 +1345,7 @@ export default function App() {
               ) : null}
 
               {pendingReminders.length > 0 ? (
-                <View style={styles.card}>
+                <View className="bg-[#FFFDF8] border border-[#E2E8F0] rounded-2xl p-6 md:p-8 shadow-sm gap-4">
                   <Text style={styles.cardEyebrow}>Pending reminders</Text>
                   <Text style={styles.sectionBody}>
                     {pendingReminders.length} reminder{pendingReminders.length > 1 ? "s" : ""} waiting for delivery. Tap ack when seen.
@@ -1370,7 +1372,7 @@ export default function App() {
                 </View>
               ) : null}
 
-              <View style={styles.card}>
+              <View className="bg-[#FFFDF8] border border-[#E2E8F0] rounded-2xl p-6 md:p-8 shadow-sm gap-4">
                 <Text style={styles.cardEyebrow}>Task list</Text>
                 <Text style={styles.sectionTitle}>Shape the work</Text>
                 <Text style={styles.sectionBody}>
@@ -1463,8 +1465,7 @@ export default function App() {
               <Text style={styles.errorText}>{errorMessage}</Text>
             </View>
           ) : null}
-        </ScrollView>
-      </SafeAreaView>
+        </PageShell>
     </SafeAreaProvider>
   );
 }
