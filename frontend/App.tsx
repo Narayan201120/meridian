@@ -29,6 +29,7 @@ import {
   getCalendarStatus,
   listAllReminders,
   listReminders,
+  pushPendingOfflineTasks,
   structureCapture,
   describeTaskError,
   listTasks,
@@ -305,6 +306,30 @@ export default function App() {
     void dispatch();
     const id = setInterval(() => void dispatch(), 30_000);
     return () => clearInterval(id);
+  }, [authSession]);
+
+  useEffect(() => {
+    if (!tasksRuntime.isApiMode || authSession === null) return;
+    const push = async () => {
+      try {
+        const pushed = await pushPendingOfflineTasks();
+        if (pushed > 0) {
+          setDispatchNotice(`${pushed} offline task${pushed > 1 ? "s" : ""} synced to server`);
+          void loadTasks({ silent: true });
+        }
+      } catch {
+        // ignore
+      }
+    };
+    void push();
+    const pid = setInterval(() => void push(), 30_000);
+    // also push when app comes back online
+    const handleOnline = () => void push();
+    if (typeof window !== "undefined") window.addEventListener("online", handleOnline);
+    return () => {
+      clearInterval(pid);
+      if (typeof window !== "undefined") window.removeEventListener("online", handleOnline);
+    };
   }, [authSession]);
 
   useEffect(() => {

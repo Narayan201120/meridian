@@ -153,6 +153,53 @@ async function getCachedTasks(): Promise<Task[] | null> {
   }
 }
 
+export async function pushPendingOfflineTasks(): Promise<number> {
+  const db = await getDb();
+  if (!db || !tasksRuntime.isApiMode) return 0;
+  try {
+    const collection = db.get("tasks");
+    const models: any[] = await collection.query().fetch();
+    const pending = models.filter((m) => !m.serverId || String(m.serverId).startsWith("offline-") || String(m.id).startsWith("offline-"));
+    let pushed = 0;
+    for (const m of pending) {
+      try {
+        const payload: CreateTaskInput = {
+          title: m.title,
+          notes: m.notes || undefined,
+          status: (m.status as TaskStatus) === "scheduled" ? "scheduled" : "inbox",
+          priority: m.priority as TaskPriority,
+          due_at: m.dueAt || null,
+          estimated_duration_minutes: m.estimatedDurationMinutes ?? null,
+        };
+        const res = await fetch(`${apiBaseUrl}/tasks`, {
+          method: "POST",
+          headers: buildApiHeaders("application/json"),
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) continue;
+        const created = (await res.json()) as Task;
+        await db.write(async () => {
+          await m.update((rec: any) => {
+            rec.serverId = created.id;
+            rec.userId = created.user_id;
+            rec.title = created.title;
+            rec.status = created.status;
+            rec.priority = created.priority;
+            rec.dueAt = created.due_at ?? "";
+            rec.estimatedDurationMinutes = created.estimated_duration_minutes ?? null;
+          });
+        });
+        pushed += 1;
+      } catch {
+        // keep pending for next retry
+      }
+    }
+    return pushed;
+  } catch {
+    return 0;
+  }
+}
+
 let demoTasks: Task[] = [
   {
     id: "demo-1",
