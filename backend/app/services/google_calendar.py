@@ -192,6 +192,106 @@ class GoogleCalendarService:
         primary = calendars.get("primary", {})
         return primary.get("busy", [])
 
+    async def sync_events(self, user_id: UUID, time_min: datetime, time_max: datetime) -> int:
+        from app.models.calendar_connection import CalendarEvent
+
+        connection = await self.get_connection(user_id)
+        if not connection or connection.status != "active":
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No active calendar connection. Connect Google Calendar first.")
+        access_token = await self.get_valid_access_token(connection)
+        params = {
+            "timeMin": time_min.isoformat().replace("+00:00", "Z"),
+            "timeMax": time_max.isoformat().replace("+00:00", "Z"),
+            "singleEvents": "true",
+            "orderBy": "startTime",
+            "maxResults": "50",
+        }
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.get(
+                GOOGLE_CALENDAR_EVENTS_URL,
+                headers={"Authorization": f"Bearer {access_token}"},
+                params=params,
+            )
+        if response.is_error:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Google Calendar events sync failed.")
+        data = response.json()
+        items = data.get("items", [])
+        now = datetime.now(timezone.utc)
+        synced = 0
+        for item in items:
+            ext_id = item.get("id")
+            if not ext_id:
+                continue
+            start_raw = (item.get("start") or {}).get("dateTime") or (item.get("start") or {}).get("date")
+            end_raw = (item.get("end") or {}).get("dateTime") or (item.get("end") or {}).get("date")
+            if not start_raw or not end_raw:
+                continue
+            try:
+                starts_at = datetime.fromisoformat(start_raw.replace("Z", "+00:00"))
+                ends_at = datetime.fromisoformat(end_raw.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            if ends_at <= starts_at:
+                continue
+            is_all_day = "date" in (item.get("start") or {})
+            existing = await self.session.scalar(
+                select(CalendarEvent).where(CalendarEvent.calendar_connection_id == connection.id, CalendarEvent.external_event_id == ext_id)
+            )
+            if existing:
+                existing.title = item.get("summary")
+                existing.starts_at = starts_at
+                existing.ends_at = ends_at
+                existing.is_all_day = is_all_day
+                existing.status = item.get("status", "confirmed")
+                existing.raw_payload = item
+                existing.last_synced_at = now
+                existing.updated_at = now
+            else:
+                ev = CalendarEvent(
+                    user_id=user_id,
+                    calendar_connection_id=connection.id,
+                    external_event_id=ext_id,
+                    title=item.get("summary"),
+                    starts_at=starts_at,
+                    ends_at=ends_at,
+                    is_all_day=is_all_day,
+                    status=item.get("status", "confirmed"),
+                    raw_payload=item,
+                    last_synced_at=now,
+                )
+                self.session.add(ev)
+            synced += 1
+        connection.last_synced_at = now
+        connection.last_error_message = None
+        connection.last_error_at = None
+        await self.session.commit()
+        return synced
+
+    async def list_cached_events(self, user_id: UUID, time_min: datetime, time_max: datetime) -> list[dict[str, str]]:
+        from app.models.calendar_connection import CalendarEvent
+
+        connection = await self.get_connection(user_id)
+        if not connection:
+            return []
+        # Return busy intervals from cached events overlapping window
+        result = await self.session.scalars(
+            select(CalendarEvent).where(
+                CalendarEvent.calendar_connection_id == connection.id,
+                CalendarEvent.starts_at < time_max,
+                CalendarEvent.ends_at > time_min,
+            ).order_by(CalendarEvent.starts_at.asc())
+        )
+        busy: list[dict[str, str]] = []
+        for ev in result.all():
+            s = ev.starts_at
+            e = ev.ends_at
+            if s.tzinfo is None:
+                s = s.replace(tzinfo=timezone.utc)
+            if e.tzinfo is None:
+                e = e.replace(tzinfo=timezone.utc)
+            busy.append({"start": s.isoformat().replace("+00:00", "Z"), "end": e.isoformat().replace("+00:00", "Z")})
+        return busy
+
     @staticmethod
     def _require_config() -> None:
         if (

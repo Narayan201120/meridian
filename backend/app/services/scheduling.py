@@ -163,7 +163,29 @@ class SchedulingService:
         if window_end.tzinfo is None:
             window_end = window_end.replace(tzinfo=timezone.utc)
 
-        raw_busy = await self.calendar.fetch_freebusy(user_id, window_start, window_end)
+        # Use cached events first, fallback to live freebusy
+        raw_busy: list[dict[str, str]] = []
+        try:
+            raw_busy = await self.calendar.list_cached_events(user_id, window_start, window_end)
+            # If cache is empty and connection never synced, try live
+            connection = await self.calendar.get_connection(user_id)
+            is_stale = True
+            if connection and connection.last_synced_at:
+                last = connection.last_synced_at
+                if last.tzinfo is None:
+                    last = last.replace(tzinfo=timezone.utc)
+                is_stale = (datetime.now(timezone.utc) - last) > timedelta(minutes=15)
+            if (not raw_busy and is_stale) or (connection and is_stale and not raw_busy):
+                # Try live, fallback to cache on failure
+                try:
+                    raw_busy = await self.calendar.fetch_freebusy(user_id, window_start, window_end)
+                except HTTPException:
+                    pass
+            elif not raw_busy and connection is None:
+                raw_busy = await self.calendar.fetch_freebusy(user_id, window_start, window_end)
+        except HTTPException:
+            # If cache path fails, try live
+            raw_busy = await self.calendar.fetch_freebusy(user_id, window_start, window_end)
         busy_intervals = _parse_busy_intervals(raw_busy)
         slots = find_free_slots(
             busy=busy_intervals,

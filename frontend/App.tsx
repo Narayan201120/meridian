@@ -33,6 +33,7 @@ import {
   describeTaskError,
   listTasks,
   suggestBlocks,
+  syncCalendarEvents,
   tasksRuntime,
   type Reminder,
   type SuggestedBlock,
@@ -187,6 +188,7 @@ export default function App() {
   const [voiceTranscript, setVoiceTranscript] = useState("");
   const [isVoiceCapturing, setIsVoiceCapturing] = useState(false);
   const [voiceResult, setVoiceResult] = useState<string | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   async function loadRemindersForTasks(nextTasks: Task[]) {
     if (!tasksRuntime.isApiMode || authSession === null) return;
@@ -370,6 +372,29 @@ export default function App() {
       setErrorMessage(describeTaskError(error));
     } finally {
       setIsVoiceCapturing(false);
+    }
+  }
+
+  async function handleSyncCalendar() {
+    if (!tasksRuntime.isApiMode || calendarStatus !== "active") {
+      setErrorMessage("Connect Google Calendar first.");
+      return;
+    }
+    setIsSyncing(true);
+    setErrorMessage(null);
+    try {
+      const now = new Date();
+      const timeMin = now.toISOString();
+      const timeMax = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
+      const res = await syncCalendarEvents(timeMin, timeMax);
+      setDispatchNotice(`Calendar synced — ${res.synced} events cached for 7 days`);
+      // refresh calendar status last_synced
+      const status = await getCalendarStatus();
+      setCalendarStatus(status);
+    } catch (error) {
+      setErrorMessage(describeTaskError(error));
+    } finally {
+      setIsSyncing(false);
     }
   }
 
@@ -1070,6 +1095,16 @@ export default function App() {
                 <Pressable style={styles.secondaryButton} onPress={() => void loadTasks()}>
                   <Text style={styles.secondaryButtonText}>Refresh</Text>
                 </Pressable>
+
+                {calendarStatus === "active" ? (
+                  <Pressable
+                    style={[styles.secondaryButton, isSyncing ? styles.buttonDisabled : null]}
+                    onPress={() => void handleSyncCalendar()}
+                    disabled={isSyncing}
+                  >
+                    <Text style={styles.secondaryButtonText}>{isSyncing ? "Syncing..." : "Sync calendar"}</Text>
+                  </Pressable>
+                ) : null}
 
                 <Pressable
                   style={[styles.secondaryButton, styles.signOutButton]}

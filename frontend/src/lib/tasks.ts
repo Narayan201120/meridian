@@ -589,6 +589,20 @@ export async function captureVoice(transcript: string, createTaskFlag = true): P
   return (await response.json()) as VoiceCaptureResponse;
 }
 
+export async function syncCalendarEvents(timeMin: string, timeMax: string): Promise<{ synced: number }> {
+  if (!tasksRuntime.isApiMode) return { synced: 0 };
+  const response = await fetch(`${tasksRuntime.apiBaseUrl}/calendar/google/sync`, {
+    method: "POST",
+    headers: buildApiHeaders("application/json"),
+    body: JSON.stringify({ time_min: timeMin, time_max: timeMax }),
+  });
+  if (!response.ok) {
+    const detail = await readErrorDetail(response);
+    throw new Error(detail || `Failed to sync calendar (${response.status})`);
+  }
+  return (await response.json()) as { synced: number };
+}
+
 export function describeTaskError(error: unknown): string {
   if (!tasksRuntime.isApiMode) {
     return extractErrorMessage(error);

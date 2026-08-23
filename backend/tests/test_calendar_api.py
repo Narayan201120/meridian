@@ -354,3 +354,65 @@ async def test_dispatch_and_ack_reminder(client, db_session):
 async def test_dispatch_requires_auth(unauthenticated_client):
     resp = await unauthenticated_client.post("/api/v1/tasks/reminders/dispatch")
     assert resp.status_code in (401, 403)
+
+
+@pytest.mark.asyncio
+async def test_calendar_sync_and_cached_suggest(client, db_session):
+    from unittest.mock import AsyncMock, patch
+    from uuid import UUID
+
+    from sqlalchemy import select
+
+    from app.models import CalendarConnection, CalendarEvent
+
+    # create task
+    create_resp = await client.post("/api/v1/tasks", json={"title": "Cached suggest"})
+    task_id = create_resp.json()["id"]
+    task_user_id = UUID(create_resp.json()["user_id"])
+    conn = CalendarConnection(user_id=task_user_id, provider="google", provider_account_id="primary", status="active")
+    db_session.add(conn)
+    await db_session.commit()
+    await db_session.refresh(conn)
+    # mock Google events list for sync
+    mock_events = {
+        "items": [
+            {
+                "id": "evt1",
+                "summary": "Busy block",
+                "status": "confirmed",
+                "start": {"dateTime": (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat().replace("+00:00", "Z")},
+                "end": {"dateTime": (datetime.now(timezone.utc) + timedelta(hours=3)).isoformat().replace("+00:00", "Z")},
+            }
+        ]
+    }
+    from unittest.mock import Mock
+
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
+        mock_resp = Mock()
+        mock_resp.is_error = False
+        mock_resp.json.return_value = mock_events
+        mock_get.return_value = mock_resp
+        # need to mock get_valid_access_token to avoid decrypt
+        with patch("app.services.google_calendar.GoogleCalendarService.get_valid_access_token", new_callable=AsyncMock) as mock_token:
+            mock_token.return_value = "fake-token"
+            payload = {"time_min": (datetime.now(timezone.utc)).isoformat(), "time_max": (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()}
+            sync_resp = await client.post("/api/v1/calendar/google/sync", json=payload)
+            assert sync_resp.status_code == 200, sync_resp.text
+            assert sync_resp.json()["synced"] == 1
+    # verify cached
+    evs = await db_session.scalars(select(CalendarEvent).where(CalendarEvent.calendar_connection_id == conn.id))
+    assert len(list(evs.all())) == 1
+    # now suggest should use cached (mock freebusy should not be called)
+    with patch("app.services.google_calendar.GoogleCalendarService.fetch_freebusy", new_callable=AsyncMock) as mock_fb:
+        mock_fb.side_effect = AssertionError("should use cache, not live freebusy")
+        with patch("app.services.google_calendar.GoogleCalendarService.list_cached_events", new_callable=AsyncMock) as mock_cached:
+            busy_start = datetime.now(timezone.utc) + timedelta(hours=2)
+            busy_end = busy_start + timedelta(hours=1)
+            mock_cached.return_value = [{"start": busy_start.isoformat().replace("+00:00", "Z"), "end": busy_end.isoformat().replace("+00:00", "Z")}]
+            resp = await client.post(f"/api/v1/tasks/{task_id}/suggest-blocks", json={})
+            assert resp.status_code == 200
+            # ensure suggestions avoid busy window
+            for s in resp.json()["suggestions"]:
+                s_start = datetime.fromisoformat(s["suggested_start_at"].replace("Z", "+00:00"))
+                # should not overlap busy
+                assert not (busy_start <= s_start < busy_end)
