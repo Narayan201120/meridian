@@ -2,16 +2,16 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Response, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user_id
 from app.db.session import get_db_session
-from app.models.task import TaskPriority, TaskStatus
-from sqlalchemy import select
-
 from app.models.calendar_connection import Reminder
+from app.models.task import TaskPriority, TaskStatus
 from app.schemas.calendar import DispatchResponse, ReminderRead, SuggestBlocksRequest, SuggestBlocksResponse, TaskCalendarBlockCreate, TaskCalendarBlockRead
 from app.schemas.task import TaskCreate, TaskRead, TaskUpdate
+from app.schemas.task_mutation_log import TaskMutationLogRead
 from app.services.scheduling import SchedulingService
 from app.services.tasks import TaskService
 
@@ -55,6 +55,63 @@ async def create_task(
 ) -> TaskRead:
     task = await task_service.create_task(user_id=current_user_id, payload=payload)
     return TaskRead.model_validate(task)
+
+
+@router.get("/mutations", response_model=list[TaskMutationLogRead], summary="List task mutation log for sync (offline-first)")
+async def list_mutations(
+    current_user_id: Annotated[UUID, Depends(get_current_user_id)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    since: str | None = Query(default=None, description="ISO datetime, return mutations created after this"),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> list[TaskMutationLogRead]:
+    from datetime import datetime
+
+    from app.models.task_mutation_log import TaskMutationLog
+
+    query = select(TaskMutationLog).where(TaskMutationLog.user_id == current_user_id).order_by(TaskMutationLog.created_at.asc()).limit(limit)
+    if since:
+        try:
+            since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+            query = query.where(TaskMutationLog.created_at > since_dt)
+        except ValueError as exc:
+            from fastapi import HTTPException, status
+
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid since datetime") from exc
+    result = await session.scalars(query)
+    return [TaskMutationLogRead.model_validate(r) for r in result.all()]
+
+
+@router.get("/reminders/list", response_model=list[ReminderRead], summary="List all reminders for current user")
+async def list_all_reminders(
+    current_user_id: Annotated[UUID, Depends(get_current_user_id)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    status_filter: str | None = None,
+) -> list[ReminderRead]:
+    query = select(Reminder).where(Reminder.user_id == current_user_id).order_by(Reminder.scheduled_for.asc())
+    result = await session.scalars(query)
+    items = list(result.all())
+    if status_filter:
+        items = [r for r in items if r.status == status_filter]
+    return [ReminderRead.model_validate(r) for r in items]
+
+
+@router.post("/reminders/dispatch", response_model=DispatchResponse, summary="Dispatch due reminders (create deliveries, mark sent)")
+async def dispatch_reminders(
+    current_user_id: Annotated[UUID, Depends(get_current_user_id)],
+    scheduling_service: Annotated[SchedulingService, Depends(get_scheduling_service)],
+) -> DispatchResponse:
+    dispatched = await scheduling_service.dispatch_due_reminders(user_id=current_user_id)
+    return DispatchResponse(dispatched=len(dispatched), reminders=[ReminderRead.model_validate(r) for r in dispatched])
+
+
+@router.post("/reminders/{reminder_id}/ack", response_model=ReminderRead, summary="Acknowledge a reminder delivery")
+async def ack_reminder(
+    reminder_id: UUID,
+    current_user_id: Annotated[UUID, Depends(get_current_user_id)],
+    scheduling_service: Annotated[SchedulingService, Depends(get_scheduling_service)],
+) -> ReminderRead:
+    reminder = await scheduling_service.acknowledge_reminder(user_id=current_user_id, reminder_id=reminder_id)
+    return ReminderRead.model_validate(reminder)
 
 
 @router.get("/{task_id}", response_model=TaskRead, summary="Get task")
@@ -117,7 +174,6 @@ async def create_block(
     current_user_id: Annotated[UUID, Depends(get_current_user_id)],
     scheduling_service: Annotated[SchedulingService, Depends(get_scheduling_service)],
 ) -> TaskCalendarBlockRead:
-    # Enforce path task_id matches body task_id if provided; body is optional alias – we treat path as source of truth
     block = await scheduling_service.create_block(
         user_id=current_user_id,
         task_id=task_id,
@@ -155,7 +211,6 @@ async def list_reminders(
     current_user_id: Annotated[UUID, Depends(get_current_user_id)],
     session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> list[ReminderRead]:
-    # Verify task belongs to user (reuse task service check via direct query)
     from app.models.task import Task
 
     task = await session.scalar(select(Task).where(Task.id == task_id, Task.user_id == current_user_id, Task.deleted_at.is_(None)))
@@ -165,38 +220,3 @@ async def list_reminders(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found.")
     result = await session.scalars(select(Reminder).where(Reminder.user_id == current_user_id, Reminder.task_id == task_id).order_by(Reminder.scheduled_for.asc()))
     return [ReminderRead.model_validate(r) for r in result.all()]
-
-
-@router.get("/reminders/list", response_model=list[ReminderRead], summary="List all reminders for current user")
-async def list_all_reminders(
-    current_user_id: Annotated[UUID, Depends(get_current_user_id)],
-    session: Annotated[AsyncSession, Depends(get_db_session)],
-    status_filter: str | None = None,
-) -> list[ReminderRead]:
-    query = select(Reminder).where(Reminder.user_id == current_user_id).order_by(Reminder.scheduled_for.asc())
-    # status filter via query param is optional string check
-    result = await session.scalars(query)
-    items = list(result.all())
-    if status_filter:
-        items = [r for r in items if r.status == status_filter]
-    return [ReminderRead.model_validate(r) for r in items]
-
-
-@router.post("/reminders/dispatch", response_model=DispatchResponse, summary="Dispatch due reminders (create deliveries, mark sent)")
-async def dispatch_reminders(
-    current_user_id: Annotated[UUID, Depends(get_current_user_id)],
-    scheduling_service: Annotated[SchedulingService, Depends(get_scheduling_service)],
-) -> DispatchResponse:
-    dispatched = await scheduling_service.dispatch_due_reminders(user_id=current_user_id)
-    return DispatchResponse(dispatched=len(dispatched), reminders=[ReminderRead.model_validate(r) for r in dispatched])
-
-
-@router.post("/reminders/{reminder_id}/ack", response_model=ReminderRead, summary="Acknowledge a reminder delivery")
-async def ack_reminder(
-    reminder_id: UUID,
-    current_user_id: Annotated[UUID, Depends(get_current_user_id)],
-    scheduling_service: Annotated[SchedulingService, Depends(get_scheduling_service)],
-) -> ReminderRead:
-    reminder = await scheduling_service.acknowledge_reminder(user_id=current_user_id, reminder_id=reminder_id)
-    return ReminderRead.model_validate(reminder)
-

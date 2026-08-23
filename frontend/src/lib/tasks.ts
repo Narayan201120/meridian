@@ -76,6 +76,83 @@ export const tasksRuntime = {
   isApiMode: authRuntime.isConfigured,
 };
 
+// WatermelonDB offline cache helpers (lean, no new file for sync logic)
+let dbAvailable: boolean | null = null;
+async function getDb() {
+  if (dbAvailable === false) return null;
+  try {
+    const { database } = await import("./db");
+    dbAvailable = true;
+    return database;
+  } catch {
+    dbAvailable = false;
+    return null;
+  }
+}
+
+async function cacheTasks(tasks: Task[]) {
+  const db = await getDb();
+  if (!db) return;
+  try {
+    await db.write(async () => {
+      const collection = db.get("tasks");
+      for (const t of tasks) {
+        const existing = await collection.query().fetch();
+        const found = existing.find((m: any) => m.serverId === t.id);
+        if (found) {
+          await found.update((m: any) => {
+            m.title = t.title;
+            m.notes = t.notes ?? "";
+            m.status = t.status;
+            m.priority = t.priority;
+            m.dueAt = t.due_at ?? "";
+            m.estimatedDurationMinutes = t.estimated_duration_minutes ?? null;
+            m.userId = t.user_id;
+            m.serverId = t.id;
+          });
+        } else {
+          await collection.create((m: any) => {
+            m.title = t.title;
+            m.notes = t.notes ?? "";
+            m.status = t.status;
+            m.priority = t.priority;
+            m.dueAt = t.due_at ?? "";
+            m.estimatedDurationMinutes = t.estimated_duration_minutes ?? null;
+            m.userId = t.user_id;
+            m.serverId = t.id;
+          });
+        }
+      }
+    });
+  } catch {
+    // ignore cache errors
+  }
+}
+
+async function getCachedTasks(): Promise<Task[] | null> {
+  const db = await getDb();
+  if (!db) return null;
+  try {
+    const collection = db.get("tasks");
+    const models: any[] = await collection.query().fetch();
+    if (models.length === 0) return null;
+    return models.map((m) => ({
+      id: m.serverId || m.id,
+      user_id: m.userId || "cached-user",
+      title: m.title,
+      notes: m.notes || null,
+      status: m.status as TaskStatus,
+      priority: m.priority as TaskPriority,
+      due_at: m.dueAt || null,
+      estimated_duration_minutes: m.estimatedDurationMinutes ?? null,
+      created_at: new Date(m.updatedAt || Date.now()).toISOString(),
+      updated_at: new Date(m.updatedAt || Date.now()).toISOString(),
+    }));
+  } catch {
+    return null;
+  }
+}
+
 let demoTasks: Task[] = [
   {
     id: "demo-1",
@@ -158,16 +235,36 @@ export async function listTasks(): Promise<Task[]> {
     return demoTasks;
   }
 
-  const response = await fetch(`${tasksRuntime.apiBaseUrl}/tasks`, {
-    headers: buildApiHeaders(),
-  });
+  try {
+    const response = await fetch(`${tasksRuntime.apiBaseUrl}/tasks`, {
+      headers: buildApiHeaders(),
+    });
 
-  if (!response.ok) {
-    throw new Error(`Failed to load tasks (${response.status})`);
+    if (!response.ok) {
+      throw new Error(`Failed to load tasks (${response.status})`);
+    }
+
+    const payload = (await response.json()) as Task[];
+    const normalized = payload.map(normalizeTask);
+    void cacheTasks(normalized);
+    return normalized;
+  } catch (error) {
+    const cached = await getCachedTasks();
+    if (cached && cached.length > 0) return cached;
+    throw error;
   }
+}
 
-  const payload = (await response.json()) as Task[];
-  return payload.map(normalizeTask);
+export async function syncTasksFromMutations(since?: string): Promise<Task[]> {
+  if (!tasksRuntime.isApiMode) return [];
+  const url = since ? `${tasksRuntime.apiBaseUrl}/tasks/mutations?since=${encodeURIComponent(since)}` : `${tasksRuntime.apiBaseUrl}/tasks/mutations`;
+  const response = await fetch(url, { headers: buildApiHeaders() });
+  if (!response.ok) {
+    const detail = await readErrorDetail(response);
+    throw new Error(detail || `Failed to sync mutations (${response.status})`);
+  }
+  // For lean, just re-fetch tasks after mutations
+  return listTasks();
 }
 
 export async function createTask(input: CreateTaskInput): Promise<Task> {
@@ -201,27 +298,56 @@ export async function createTask(input: CreateTaskInput): Promise<Task> {
     return task;
   }
 
-  const response = await fetch(`${tasksRuntime.apiBaseUrl}/tasks`, {
-    method: "POST",
-    headers: buildApiHeaders("application/json"),
-    body: JSON.stringify({
+  try {
+    const response = await fetch(`${tasksRuntime.apiBaseUrl}/tasks`, {
+      method: "POST",
+      headers: buildApiHeaders("application/json"),
+      body: JSON.stringify({
+        title,
+        notes,
+        status,
+        priority,
+        due_at: dueAt,
+        estimated_duration_minutes: estimatedDuration,
+      }),
+    });
+
+    if (!response.ok) {
+      const detail = await readErrorDetail(response);
+
+      throw new Error(detail || `Failed to create task (${response.status})`);
+    }
+
+    const payload = (await response.json()) as Task;
+    const normalized = normalizeTask(payload);
+    void cacheTasks([normalized]);
+    return normalized;
+  } catch (error) {
+    // Offline fallback: cache locally with temp id
+    const now = new Date().toISOString();
+    const offlineTask: Task = {
+      id: `offline-${Date.now()}`,
+      user_id: "offline-user",
       title,
       notes,
       status,
       priority,
       due_at: dueAt,
       estimated_duration_minutes: estimatedDuration,
-    }),
-  });
-
-  if (!response.ok) {
-    const detail = await readErrorDetail(response);
-
-    throw new Error(detail || `Failed to create task (${response.status})`);
+      created_at: now,
+      updated_at: now,
+    };
+    void cacheTasks([offlineTask]);
+    // If error was network, return offline task; else throw original
+    if (error instanceof TypeError && error.message.includes("fetch")) return offlineTask;
+    // For other errors (validation) still throw
+    if (offlineTask.id.startsWith("offline-") && (error as Error).message.includes("Failed to")) {
+      // If create failed due to offline, return offline task
+      const cached = await getCachedTasks();
+      if (cached) return offlineTask;
+    }
+    throw error;
   }
-
-  const payload = (await response.json()) as Task;
-  return normalizeTask(payload);
 }
 
 export async function structureCapture(text: string): Promise<CaptureSuggestion> {

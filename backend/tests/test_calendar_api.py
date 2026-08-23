@@ -357,6 +357,33 @@ async def test_dispatch_requires_auth(unauthenticated_client):
 
 
 @pytest.mark.asyncio
+async def test_mutations_sync(client):
+    # create task to generate mutation
+    resp = await client.post("/api/v1/tasks", json={"title": "Sync me"})
+    assert resp.status_code == 201
+    task_id = resp.json()["id"]
+    # list mutations
+    resp2 = await client.get("/api/v1/tasks/mutations")
+    assert resp2.status_code == 200, resp2.text
+    body = resp2.json()
+    assert len(body) >= 1
+    assert any(m["task_id"] == task_id for m in body)
+    # since filter should return 0 for future
+    from datetime import datetime, timezone, timedelta
+
+    future = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat().replace("+00:00", "Z")
+    resp3 = await client.get("/api/v1/tasks/mutations", params={"since": future})
+    assert resp3.status_code == 200
+    assert len(resp3.json()) == 0
+
+
+@pytest.mark.asyncio
+async def test_mutations_requires_auth(unauthenticated_client):
+    resp = await unauthenticated_client.get("/api/v1/tasks/mutations")
+    assert resp.status_code in (401, 403)
+
+
+@pytest.mark.asyncio
 async def test_calendar_sync_and_cached_suggest(client, db_session):
     from unittest.mock import AsyncMock, patch
     from uuid import UUID
