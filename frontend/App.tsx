@@ -10,8 +10,15 @@ import {
   View,
 } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import { Badge } from "./src/components/ui/Badge";
+import { Button } from "./src/components/ui/Button";
 import { Card } from "./src/components/ui/Card";
+import { InputField } from "./src/components/ui/InputField";
 import { PageShell } from "./src/components/ui/PageShell";
+import { SectionHeader } from "./src/components/ui/SectionHeader";
+import { StatusBanner } from "./src/components/ui/StatusBanner";
+import { CreateTaskForm } from "./src/components/CreateTaskForm";
+import { VoiceCaptureCard } from "./src/components/VoiceCaptureCard";
 
 import {
   authRuntime,
@@ -155,17 +162,7 @@ export default function App() {
   const [authSession, setAuthSession] = useState<AuthSession | null>(() => getCurrentSession());
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
-  const [title, setTitle] = useState("");
-  const [notes, setNotes] = useState("");
-  const [draftPriority, setDraftPriority] = useState<Task["priority"]>("medium");
-  const [draftDuration, setDraftDuration] = useState("");
-  const [scheduledForInput, setScheduledForInput] = useState("");
-  const [draftStatus, setDraftStatus] = useState<Extract<Task["status"], "inbox" | "scheduled">>(
-    "inbox",
-  );
   const [isLoading, setIsLoading] = useState(true);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isStructuring, setIsStructuring] = useState(false);
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -188,9 +185,6 @@ export default function App() {
   const [remindersByTask, setRemindersByTask] = useState<Record<string, Reminder[]>>({});
   const [pendingReminders, setPendingReminders] = useState<Reminder[]>([]);
   const [dispatchNotice, setDispatchNotice] = useState<string | null>(null);
-  const [voiceTranscript, setVoiceTranscript] = useState("");
-  const [isVoiceCapturing, setIsVoiceCapturing] = useState(false);
-  const [voiceResult, setVoiceResult] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
 
   async function loadRemindersForTasks(nextTasks: Task[]) {
@@ -362,45 +356,7 @@ export default function App() {
     );
   }
 
-  async function handleStructureCapture() {
-    const captureText = [title, notes].filter(Boolean).join("\n");
 
-    setIsStructuring(true);
-    setErrorMessage(null);
-
-    try {
-      const suggestion = await structureCapture(captureText);
-      setTitle(suggestion.title);
-      setNotes(suggestion.notes ?? "");
-      setDraftPriority(suggestion.priority);
-      setDraftDuration(suggestion.estimated_duration_minutes?.toString() ?? "");
-    } catch (error) {
-      setErrorMessage(describeTaskError(error));
-    } finally {
-      setIsStructuring(false);
-    }
-  }
-
-  async function handleVoiceCapture() {
-    if (!voiceTranscript.trim()) {
-      setErrorMessage("Add a voice transcript before capturing.");
-      return;
-    }
-    setIsVoiceCapturing(true);
-    setErrorMessage(null);
-    setVoiceResult(null);
-    try {
-      const res = await captureVoice(voiceTranscript, true);
-      setVoiceResult(`Captured "${res.suggestion.title}"` + (res.task_id ? ` → task ${res.task_id.slice(0, 8)}` : ""));
-      setVoiceTranscript("");
-      // refresh tasks to show new voice task
-      void loadTasks({ silent: true });
-    } catch (error) {
-      setErrorMessage(describeTaskError(error));
-    } finally {
-      setIsVoiceCapturing(false);
-    }
-  }
 
   async function handleSyncCalendar() {
     if (!tasksRuntime.isApiMode || calendarStatus !== "active") {
@@ -425,70 +381,6 @@ export default function App() {
     }
   }
 
-  async function handleCreateTask() {
-    if (!title.trim()) {
-      setErrorMessage("Give the task a title before adding it.");
-      return;
-    }
-
-    const durationInput = draftDuration.trim();
-    const estimatedDuration = durationInput ? Number(durationInput) : null;
-
-    if (
-      estimatedDuration !== null &&
-      (!Number.isInteger(estimatedDuration) || estimatedDuration <= 0 || estimatedDuration > 1_440)
-    ) {
-      setErrorMessage("Estimated duration must be a whole number between 1 and 1440 minutes.");
-      return;
-    }
-
-    let dueAt: string | null = null;
-
-    if (draftStatus === "scheduled") {
-      try {
-        dueAt = parseDateTimeInputValue(scheduledForInput);
-      } catch (error) {
-        setErrorMessage(describeTaskError(error));
-        return;
-      }
-
-      if (dueAt === null) {
-        setErrorMessage("Scheduled tasks need a date and time.");
-        return;
-      }
-    }
-
-    setIsSubmitting(true);
-    setErrorMessage(null);
-
-    try {
-      const nextTask = await createTask({
-        title,
-        notes,
-        status: draftStatus,
-        priority: draftPriority,
-        due_at: dueAt,
-        estimated_duration_minutes: estimatedDuration,
-      });
-      setTasks((currentTasks) => [nextTask, ...currentTasks]);
-      if (activeTaskFilter !== "all" && activeTaskFilter !== nextTask.status) {
-        setActiveTaskFilter(nextTask.status);
-      }
-      if (nextTask.status === "scheduled" || nextTask.status === "due_now") {
-        void refreshRemindersForTask(nextTask.id);
-      }
-      setTitle("");
-      setNotes("");
-      setDraftPriority("medium");
-      setDraftDuration("");
-      setScheduledForInput("");
-      setDraftStatus("inbox");
-    } catch (error) {
-      setErrorMessage(describeTaskError(error));
-    } finally {
-      setIsSubmitting(false);
-    }
-  }
 
   async function handleSignIn() {
     if (!authEmail.trim() || !authPassword) {
@@ -1117,232 +1009,65 @@ export default function App() {
             </View>
 
             {tasksRuntime.isApiMode && authSession ? (
-              <View style={styles.modeActions}>
-                <Pressable style={styles.secondaryButton} onPress={() => void loadTasks()}>
-                  <Text style={styles.secondaryButtonText}>Refresh</Text>
-                </Pressable>
-
+              <View className="flex-row flex-wrap gap-2">
+                <Button variant="secondary" size="sm" onPress={() => void loadTasks()}>
+                  Refresh
+                </Button>
                 {calendarStatus === "active" ? (
-                  <Pressable
-                    style={[styles.secondaryButton, isSyncing ? styles.buttonDisabled : null]}
-                    onPress={() => void handleSyncCalendar()}
-                    disabled={isSyncing}
-                  >
-                    <Text style={styles.secondaryButtonText}>{isSyncing ? "Syncing..." : "Sync calendar"}</Text>
-                  </Pressable>
+                  <Button variant="secondary" size="sm" loading={isSyncing} onPress={() => void handleSyncCalendar()}>
+                    {isSyncing ? "Syncing..." : "Sync calendar"}
+                  </Button>
                 ) : null}
-
-                <Pressable
-                  style={[styles.secondaryButton, styles.signOutButton]}
-                  onPress={() => void handleSignOut()}
-                  disabled={isSigningOut}
-                >
-                  <Text style={[styles.secondaryButtonText, styles.signOutButtonText]}>
-                    {isSigningOut ? "Signing out..." : "Sign out"}
-                  </Text>
-                </Pressable>
+                <Button variant="destructive" size="sm" loading={isSigningOut} onPress={() => void handleSignOut()}>
+                  {isSigningOut ? "Signing out..." : "Sign out"}
+                </Button>
               </View>
             ) : (
-              <Pressable style={styles.secondaryButton} onPress={() => void loadTasks()}>
-                <Text style={styles.secondaryButtonText}>
-                  {tasksRuntime.isApiMode ? "Retry" : "Refresh"}
-                </Text>
-              </Pressable>
+              <Button variant="secondary" size="sm" onPress={() => void loadTasks()}>
+                {tasksRuntime.isApiMode ? "Retry" : "Refresh"}
+              </Button>
             )}
           </Card>
 
           {tasksRuntime.isApiMode && authSession === null ? (
-            <Card variant="floating">
-              <Text style={styles.cardEyebrow}>Sign in</Text>
-              <Text style={styles.sectionTitle}>Use your Supabase user</Text>
-              <Text style={styles.sectionBody}>
-                Sign in with the local auth user you created in Supabase Studio so the task flow
-                uses the same bearer-token auth path the backend now enforces.
-              </Text>
-
-              <TextInput
-                placeholder="Email"
-                placeholderTextColor="#7D7A70"
-                style={styles.input}
+            <Card variant="floating" className="gap-4">
+              <SectionHeader
+                eyebrow="SIGN IN"
+                title="Use your Supabase user"
+                body="Sign in with the local auth user you created in Supabase Studio so the task flow uses the same bearer-token auth path the backend now enforces."
+              />
+              <InputField
+                label="Email"
+                placeholder="you@example.com"
                 value={authEmail}
                 onChangeText={setAuthEmail}
                 autoCapitalize="none"
                 keyboardType="email-address"
+                textContentType="emailAddress"
               />
-              <TextInput
-                placeholder="Password"
-                placeholderTextColor="#7D7A70"
-                style={styles.input}
+              <InputField
+                label="Password"
+                placeholder="••••••••"
                 value={authPassword}
                 onChangeText={setAuthPassword}
                 secureTextEntry
+                textContentType="password"
               />
-
-              <Pressable
-                style={[styles.primaryButton, isSigningIn ? styles.buttonDisabled : null]}
-                onPress={() => void handleSignIn()}
-                disabled={isSigningIn}
-              >
-                <Text style={styles.primaryButtonText}>
-                  {isSigningIn ? "Signing in..." : "Sign in"}
-                </Text>
-              </Pressable>
+              <Button variant="primary" size="md" loading={isSigningIn} onPress={() => void handleSignIn()}>
+                {isSigningIn ? "Signing in..." : "Sign in"}
+              </Button>
             </Card>
 
           ) : (
             <>
-              <Card variant="floating">
-                <Text style={styles.cardEyebrow}>Create task</Text>
-                <Text style={styles.sectionTitle}>Add something real</Text>
-                <Text style={styles.sectionBody}>
-                  Keep this first flow narrow: title, optional notes, then decide whether it lands
-                  in inbox or scheduled work with a real activation time.
-                </Text>
+              <CreateTaskForm />
+              <VoiceCaptureCard />
 
-                <View style={styles.filterRow}>
-                  {[
-                    { key: "inbox", label: "Send to inbox" },
-                    { key: "scheduled", label: "Mark scheduled" },
-                  ].map((option) => {
-                    const isActive = draftStatus === option.key;
+              {errorMessage ? <StatusBanner variant="error" title="Current issue" message={errorMessage} actionLabel="Retry" onAction={() => void loadTasks()} /> : null}
 
-                    return (
-                      <Pressable
-                        key={option.key}
-                        style={[styles.filterChip, isActive ? styles.filterChipActive : null]}
-                        onPress={() =>
-                          setDraftStatus(option.key as Extract<Task["status"], "inbox" | "scheduled">)
-                        }
-                      >
-                        <Text
-                          style={[
-                            styles.filterChipText,
-                            isActive ? styles.filterChipTextActive : null,
-                          ]}
-                        >
-                          {option.label}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
+              {dueNotice ? <StatusBanner variant="success" title="Due now" message={dueNotice} /> : null}
 
-                <TextInput
-                  placeholder="Task title"
-                  placeholderTextColor="#7D7A70"
-                  style={styles.input}
-                  value={title}
-                  onChangeText={setTitle}
-                />
-                <TextInput
-                  placeholder="Notes (optional)"
-                  placeholderTextColor="#7D7A70"
-                  style={[styles.input, styles.notesInput]}
-                  value={notes}
-                  onChangeText={setNotes}
-                  multiline
-                />
-                <Pressable
-                  style={[styles.secondaryButton, isStructuring ? styles.buttonDisabled : null]}
-                  onPress={() => void handleStructureCapture()}
-                  disabled={isStructuring}
-                >
-                  <Text style={styles.secondaryButtonText}>
-                    {isStructuring ? "Structuring..." : "Structure details"}
-                  </Text>
-                </Pressable>
-                <TextInput
-                  placeholder="Estimated duration in minutes (optional)"
-                  placeholderTextColor="#7D7A70"
-                  style={styles.input}
-                  value={draftDuration}
-                  onChangeText={setDraftDuration}
-                  keyboardType="number-pad"
-                />
-                <View style={styles.filterRow}>
-                  {(["low", "medium", "high"] as const).map((priority) => {
-                    const isSelected = draftPriority === priority;
-                    return (
-                      <Pressable
-                        key={priority}
-                        style={[styles.filterChip, isSelected ? styles.filterChipActive : null]}
-                        onPress={() => setDraftPriority(priority)}
-                      >
-                        <Text style={[styles.filterChipText, isSelected ? styles.filterChipTextActive : null]}>
-                          {priority}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-                {draftStatus === "scheduled" ? (
-                  <TextInput
-                    placeholder="Schedule time: YYYY-MM-DDTHH:MM"
-                    placeholderTextColor="#7D7A70"
-                    style={styles.input}
-                    value={scheduledForInput}
-                    onChangeText={setScheduledForInput}
-                    autoCapitalize="none"
-                  />
-                ) : null}
-
-                <Pressable
-                  style={[styles.primaryButton, isSubmitting ? styles.buttonDisabled : null]}
-                  onPress={() => void handleCreateTask()}
-                  disabled={isSubmitting}
-                >
-                  <Text style={styles.primaryButtonText}>
-                    {isSubmitting
-                      ? "Adding task..."
-                      : draftStatus === "scheduled"
-                        ? "Add scheduled task"
-                        : "Add task"}
-                  </Text>
-                </Pressable>
-              </Card>
-
-              <Card variant="floating">
-                <Text style={styles.cardEyebrow}>Voice capture</Text>
-                <Text style={styles.sectionTitle}>Speak it, keep it</Text>
-                <Text style={styles.sectionBody}>Paste a transcript (future: mic) — it will be structured and saved as a voice task. Never auto-writes calendar.</Text>
-                <TextInput
-                  placeholder="Voice transcript (e.g., Urgent: record demo video, needs 30 minutes)"
-                  placeholderTextColor="#7D7A70"
-                  style={[styles.input, styles.notesInput]}
-                  value={voiceTranscript}
-                  onChangeText={setVoiceTranscript}
-                  multiline
-                />
-                <Pressable
-                  style={[styles.primaryButton, isVoiceCapturing ? styles.buttonDisabled : null]}
-                  onPress={() => void handleVoiceCapture()}
-                  disabled={isVoiceCapturing}
-                >
-                  <Text style={styles.primaryButtonText}>{isVoiceCapturing ? "Capturing voice..." : "Capture voice → Create task"}</Text>
-                </Pressable>
-                {voiceResult ? <Text style={styles.metaText}>{voiceResult}</Text> : null}
-              </Card>
-
-              {errorMessage ? (
-                <View style={styles.errorCard}>
-                  <Text style={styles.errorLabel}>Current issue</Text>
-                  <Text style={styles.errorText}>{errorMessage}</Text>
-                </View>
-              ) : null}
-
-              {dueNotice ? (
-                <View style={styles.noticeCard}>
-                  <Text style={styles.noticeLabel}>Due now</Text>
-                  <Text style={styles.noticeText}>{dueNotice}</Text>
-                </View>
-              ) : null}
-
-              {dispatchNotice ? (
-                <View style={styles.noticeCard}>
-                  <Text style={styles.noticeLabel}>Reminders</Text>
-                  <Text style={styles.noticeText}>{dispatchNotice}</Text>
-                </View>
-              ) : null}
+              {dispatchNotice ? <StatusBanner variant="success" title="Reminders" message={dispatchNotice} /> : null}
 
               {pendingReminders.length > 0 ? (
                 <View className="bg-[#FFFDF8] border border-[#E2E8F0] rounded-2xl p-6 md:p-8 shadow-sm gap-4">
@@ -1459,12 +1184,7 @@ export default function App() {
             </>
           )}
 
-          {tasksRuntime.isApiMode && authSession === null && errorMessage ? (
-            <View style={styles.errorCard}>
-              <Text style={styles.errorLabel}>Current issue</Text>
-              <Text style={styles.errorText}>{errorMessage}</Text>
-            </View>
-          ) : null}
+          {tasksRuntime.isApiMode && authSession === null && errorMessage ? <StatusBanner variant="error" title="Current issue" message={errorMessage} /> : null}
         </PageShell>
     </SafeAreaProvider>
   );
