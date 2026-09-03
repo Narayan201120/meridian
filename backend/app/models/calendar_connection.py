@@ -2,7 +2,8 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, DateTime, Enum as SqlEnum, String, Text, text
+from sqlalchemy import Boolean, DateTime, Enum as SqlEnum, JSON, String, Text, text
+from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -65,7 +66,7 @@ class CalendarConnection(Base):
     access_token_ciphertext: Mapped[str | None] = mapped_column(Text)
     refresh_token_ciphertext: Mapped[str | None] = mapped_column(Text)
     token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    scopes: Mapped[list[str]] = mapped_column(JSONB_or_JSON, nullable=False, default=list)
+    scopes: Mapped[list[str]] = mapped_column(PG_ARRAY(Text).with_variant(JSON(), "sqlite"), nullable=False, default=list)
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error_message: Mapped[str | None] = mapped_column(Text)
