@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
-  ScrollView,
   StatusBar,
   StyleSheet,
   Text,
@@ -10,41 +9,30 @@ import {
   View,
 } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { Badge } from "./src/components/ui/Badge";
-import { Button } from "./src/components/ui/Button";
-import { Card } from "./src/components/ui/Card";
-import { InputField } from "./src/components/ui/InputField";
 import { PageShell } from "./src/components/ui/PageShell";
-import { SectionHeader } from "./src/components/ui/SectionHeader";
 import { StatusBanner } from "./src/components/ui/StatusBanner";
 import { CreateTaskForm } from "./src/components/CreateTaskForm";
 import { VoiceCaptureCard } from "./src/components/VoiceCaptureCard";
 import { TaskList } from "./src/components/TaskList";
+import { Hero } from "./src/components/Hero";
+import { ModeStatus } from "./src/components/ModeStatus";
+import { AuthCard } from "./src/components/AuthCard";
+import { PendingRemindersCard } from "./src/components/PendingRemindersCard";
+import { useAuth } from "./src/hooks/useAuth";
+import { useCalendarSync } from "./src/hooks/useCalendarSync";
 
+import { authRuntime } from "./src/lib/auth";
 import {
-  authRuntime,
-  getCurrentSession,
-  signInWithPassword,
-  signOut,
-  type AuthSession,
-} from "./src/lib/auth";
-import {
-  acknowledgeReminder,
-  captureVoice,
   confirmTaskCalendarBlock,
   createTaskCalendarBlock,
-  createTask,
   deleteTask,
   dispatchReminders,
-  getCalendarStatus,
   listAllReminders,
   listReminders,
   pushPendingOfflineTasks,
-  structureCapture,
   describeTaskError,
   listTasks,
   suggestBlocks,
-  syncCalendarEvents,
   tasksRuntime,
   type Reminder,
   type SuggestedBlock,
@@ -101,13 +89,11 @@ function formatTaskTime(value: string | null) {
 
 export default function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [authSession, setAuthSession] = useState<AuthSession | null>(() => getCurrentSession());
-  const [authEmail, setAuthEmail] = useState("");
-  const [authPassword, setAuthPassword] = useState("");
   const [isLoading, setIsLoading] = useState(true);
-  const [isSigningIn, setIsSigningIn] = useState(false);
-  const [isSigningOut, setIsSigningOut] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [dispatchNotice, setDispatchNotice] = useState<string | null>(null);
+  const { authSession, authEmail, setAuthEmail, authPassword, setAuthPassword, isSigningIn, isSigningOut, handleSignIn, handleSignOut } = useAuth(setErrorMessage);
+  const { calendarStatus, isSyncing, handleSyncCalendar } = useCalendarSync(authSession, setErrorMessage, setDispatchNotice);
   const [dueNotice, setDueNotice] = useState<string | null>(null);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [activeTaskFilter, setActiveTaskFilter] = useState<TaskListFilter>("all");
@@ -123,11 +109,8 @@ export default function App() {
   >(null);
   const [suggestTaskId, setSuggestTaskId] = useState<string | null>(null);
   const [suggestionsByTask, setSuggestionsByTask] = useState<Record<string, SuggestedBlock[]>>({});
-  const [calendarStatus, setCalendarStatus] = useState<string | null>(null);
   const [remindersByTask, setRemindersByTask] = useState<Record<string, Reminder[]>>({});
   const [pendingReminders, setPendingReminders] = useState<Reminder[]>([]);
-  const [dispatchNotice, setDispatchNotice] = useState<string | null>(null);
-  const [isSyncing, setIsSyncing] = useState(false);
 
   async function loadRemindersForTasks(nextTasks: Task[]) {
     if (!tasksRuntime.isApiMode || authSession === null) return;
@@ -270,28 +253,6 @@ export default function App() {
     };
   }, [authSession]);
 
-  useEffect(() => {
-    if (!tasksRuntime.isApiMode || authSession === null) {
-      setCalendarStatus(null);
-      return;
-    }
-
-    let cancelled = false;
-
-    void (async () => {
-      try {
-        const status = await getCalendarStatus();
-        if (!cancelled) setCalendarStatus(status);
-      } catch {
-        if (!cancelled) setCalendarStatus("unknown");
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [authSession]);
-
   function replaceTask(nextTask: Task) {
     setTasks((currentTasks) =>
       currentTasks.map((task) => (task.id === nextTask.id ? nextTask : task)),
@@ -300,63 +261,9 @@ export default function App() {
 
 
 
-  async function handleSyncCalendar() {
-    if (!tasksRuntime.isApiMode || calendarStatus !== "active") {
-      setErrorMessage("Connect Google Calendar first.");
-      return;
-    }
-    setIsSyncing(true);
-    setErrorMessage(null);
-    try {
-      const now = new Date();
-      const timeMin = now.toISOString();
-      const timeMax = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
-      const res = await syncCalendarEvents(timeMin, timeMax);
-      setDispatchNotice(`Calendar synced — ${res.synced} events cached for 7 days`);
-      // refresh calendar status last_synced
-      const status = await getCalendarStatus();
-      setCalendarStatus(status);
-    } catch (error) {
-      setErrorMessage(describeTaskError(error));
-    } finally {
-      setIsSyncing(false);
-    }
-  }
-
-
-  async function handleSignIn() {
-    if (!authEmail.trim() || !authPassword) {
-      setErrorMessage("Enter the email and password for your Supabase user.");
-      return;
-    }
-
-    setIsSigningIn(true);
-    setErrorMessage(null);
-
-    try {
-      const session = await signInWithPassword(authEmail, authPassword);
-      setAuthSession(session);
-      setAuthPassword("");
-    } catch (error) {
-      setErrorMessage(describeTaskError(error));
-    } finally {
-      setIsSigningIn(false);
-    }
-  }
-
-  async function handleSignOut() {
-    setIsSigningOut(true);
-    setErrorMessage(null);
-
-    try {
-      await signOut();
-      setAuthSession(null);
-      setTasks([]);
-    } catch (error) {
-      setErrorMessage(describeTaskError(error));
-    } finally {
-      setIsSigningOut(false);
-    }
+  async function handleSignOutAndClear() {
+    await handleSignOut();
+    setTasks([]);
   }
 
   async function handleToggleTaskStatus(task: Task) {
@@ -914,89 +821,26 @@ export default function App() {
     <SafeAreaProvider>
       <StatusBar barStyle="dark-content" />
       <PageShell>
-          <Card variant="hero">
-            <Text style={styles.kicker}>Meridian</Text>
-            <Text style={styles.title}>Capture a task, then give it somewhere real to go.</Text>
-            <Text style={styles.subtitle}>
-              This is the first live task flow. In demo mode it runs locally. In API mode it talks
-              to the FastAPI backend with a real Supabase bearer token.
-            </Text>
-          </Card>
-
-          <Card variant="floating">
-            <View>
-              <Text style={styles.cardEyebrow}>
-                {tasksRuntime.isApiMode ? "API mode" : "Demo mode"}
-              </Text>
-              <Text style={styles.modeTitle}>
-                {tasksRuntime.isApiMode
-                  ? authSession
-                    ? "Frontend is calling the backend with a Supabase bearer token."
-                    : "Sign in with your Supabase user to load live tasks."
-                  : "Frontend is using local demo data until Supabase auth is configured."}
-              </Text>
-              <Text style={styles.modeBody}>Base URL: {tasksRuntime.apiBaseUrl}</Text>
-              {tasksRuntime.isApiMode && authSession ? (
-                <>
-                  <Text style={styles.modeBody}>
-                    Signed in as {authSession.user.email ?? authSession.user.id}
-                  </Text>
-                  <Text style={styles.modeBody}>
-                    Calendar: {calendarStatus ?? "checking..."}
-                  </Text>
-                </>
-              ) : null}
-            </View>
-
-            {tasksRuntime.isApiMode && authSession ? (
-              <View className="flex-row flex-wrap gap-2">
-                <Button variant="secondary" size="sm" onPress={() => void loadTasks()}>
-                  Refresh
-                </Button>
-                {calendarStatus === "active" ? (
-                  <Button variant="secondary" size="sm" loading={isSyncing} onPress={() => void handleSyncCalendar()}>
-                    {isSyncing ? "Syncing..." : "Sync calendar"}
-                  </Button>
-                ) : null}
-                <Button variant="destructive" size="sm" loading={isSigningOut} onPress={() => void handleSignOut()}>
-                  {isSigningOut ? "Signing out..." : "Sign out"}
-                </Button>
-              </View>
-            ) : (
-              <Button variant="secondary" size="sm" onPress={() => void loadTasks()}>
-                {tasksRuntime.isApiMode ? "Retry" : "Refresh"}
-              </Button>
-            )}
-          </Card>
+          <Hero />
+          <ModeStatus
+            authSession={authSession}
+            calendarStatus={calendarStatus}
+            isSyncing={isSyncing}
+            isSigningOut={isSigningOut}
+            onRefresh={() => void loadTasks()}
+            onSync={() => void handleSyncCalendar()}
+            onSignOut={() => void handleSignOutAndClear()}
+          />
 
           {tasksRuntime.isApiMode && authSession === null ? (
-            <Card variant="floating" className="gap-4">
-              <SectionHeader
-                eyebrow="SIGN IN"
-                title="Use your Supabase user"
-                body="Sign in with the local auth user you created in Supabase Studio so the task flow uses the same bearer-token auth path the backend now enforces."
-              />
-              <InputField
-                label="Email"
-                placeholder="you@example.com"
-                value={authEmail}
-                onChangeText={setAuthEmail}
-                autoCapitalize="none"
-                keyboardType="email-address"
-                textContentType="emailAddress"
-              />
-              <InputField
-                label="Password"
-                placeholder="••••••••"
-                value={authPassword}
-                onChangeText={setAuthPassword}
-                secureTextEntry
-                textContentType="password"
-              />
-              <Button variant="primary" size="md" loading={isSigningIn} onPress={() => void handleSignIn()}>
-                {isSigningIn ? "Signing in..." : "Sign in"}
-              </Button>
-            </Card>
+            <AuthCard
+              authEmail={authEmail}
+              setAuthEmail={setAuthEmail}
+              authPassword={authPassword}
+              setAuthPassword={setAuthPassword}
+              isSigningIn={isSigningIn}
+              onSignIn={() => void handleSignIn()}
+            />
 
           ) : (
             <>
@@ -1009,33 +853,7 @@ export default function App() {
 
               {dispatchNotice ? <StatusBanner variant="success" title="Reminders" message={dispatchNotice} /> : null}
 
-              {pendingReminders.length > 0 ? (
-                <View className="bg-[#FFFDF8] border border-[#E2E8F0] rounded-2xl p-6 md:p-8 shadow-sm gap-4">
-                  <Text style={styles.cardEyebrow}>Pending reminders</Text>
-                  <Text style={styles.sectionBody}>
-                    {pendingReminders.length} reminder{pendingReminders.length > 1 ? "s" : ""} waiting for delivery. Tap ack when seen.
-                  </Text>
-                  {pendingReminders.map((r) => (
-                    <View key={r.id} style={styles.suggestionCard}>
-                      <Text style={styles.suggestionTime}>{r.type === "scheduled_block" ? "Block" : "Due"} — {formatTaskTime(r.scheduled_for)}</Text>
-                      <Text style={styles.suggestionTimeSmall}>{r.status} · {r.id.slice(0, 8)}</Text>
-                      <Pressable
-                        style={[styles.taskActionButton, styles.secondaryTaskButton]}
-                        onPress={async () => {
-                          try {
-                            await acknowledgeReminder(r.id);
-                            setPendingReminders((prev) => prev.filter((x) => x.id !== r.id));
-                          } catch (e) {
-                            setErrorMessage(describeTaskError(e));
-                          }
-                        }}
-                      >
-                        <Text style={[styles.taskActionButtonText, styles.secondaryTaskButtonText]}>Ack</Text>
-                      </Pressable>
-                    </View>
-                  ))}
-                </View>
-              ) : null}
+              <PendingRemindersCard pending={pendingReminders} onAcked={(id) => setPendingReminders((prev) => prev.filter((x) => x.id !== id))} onError={(m) => setErrorMessage(m)} />
 
               <TaskList
                 activeFilter={activeTaskFilter}
@@ -1054,100 +872,6 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: "#F3EBDD",
-  },
-  container: {
-    paddingHorizontal: 20,
-    paddingTop: 24,
-    paddingBottom: 40,
-    gap: 18,
-  },
-  hero: {
-    backgroundColor: "#132A24",
-    borderRadius: 28,
-    paddingHorizontal: 22,
-    paddingVertical: 26,
-    shadowColor: "#132A24",
-    shadowOpacity: 0.18,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 10 },
-    elevation: 6,
-  },
-  kicker: {
-    color: "#DAB785",
-    fontSize: 13,
-    fontWeight: "700",
-    letterSpacing: 1.4,
-    textTransform: "uppercase",
-    marginBottom: 10,
-  },
-  title: {
-    color: "#FFF8EE",
-    fontSize: 32,
-    lineHeight: 38,
-    fontWeight: "800",
-    marginBottom: 12,
-  },
-  subtitle: {
-    color: "#D9E3DC",
-    fontSize: 16,
-    lineHeight: 24,
-  },
-  card: {
-    backgroundColor: "#FFF9F0",
-    borderRadius: 22,
-    paddingHorizontal: 18,
-    paddingVertical: 18,
-    borderWidth: 1,
-    borderColor: "#E5D6BF",
-    gap: 12,
-  },
-  modeCard: {
-    backgroundColor: "#FFF3D7",
-    borderRadius: 22,
-    paddingHorizontal: 18,
-    paddingVertical: 18,
-    borderWidth: 1,
-    borderColor: "#E8C994",
-    gap: 14,
-  },
-  modeActions: {
-    flexDirection: "row",
-    gap: 10,
-    alignItems: "center",
-  },
-  cardEyebrow: {
-    color: "#B45A36",
-    fontSize: 12,
-    fontWeight: "700",
-    letterSpacing: 1.1,
-    textTransform: "uppercase",
-    marginBottom: 8,
-  },
-  modeTitle: {
-    color: "#1D2A2C",
-    fontSize: 18,
-    lineHeight: 24,
-    fontWeight: "700",
-  },
-  modeBody: {
-    color: "#4C4A43",
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  sectionTitle: {
-    color: "#1D2A2C",
-    fontSize: 24,
-    lineHeight: 30,
-    fontWeight: "700",
-  },
-  sectionBody: {
-    color: "#415255",
-    fontSize: 15,
-    lineHeight: 22,
-  },
   input: {
     backgroundColor: "#FFFDF8",
     borderRadius: 16,
@@ -1162,108 +886,8 @@ const styles = StyleSheet.create({
     minHeight: 108,
     textAlignVertical: "top",
   },
-  primaryButton: {
-    backgroundColor: "#132A24",
-    borderRadius: 16,
-    alignItems: "center",
-    paddingVertical: 14,
-  },
-  primaryButtonText: {
-    color: "#FFF8EE",
-    fontSize: 15,
-    fontWeight: "700",
-  },
-  secondaryButton: {
-    alignSelf: "flex-start",
-    backgroundColor: "#132A24",
-    borderRadius: 999,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  secondaryButtonText: {
-    color: "#FFF8EE",
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  signOutButton: {
-    backgroundColor: "#F6DED3",
-  },
-  signOutButtonText: {
-    color: "#7F2E14",
-  },
   buttonDisabled: {
     opacity: 0.7,
-  },
-  errorCard: {
-    borderRadius: 20,
-    backgroundColor: "#F9D4C7",
-    borderWidth: 1,
-    borderColor: "#E4A08B",
-    paddingHorizontal: 18,
-    paddingVertical: 16,
-    gap: 8,
-  },
-  errorLabel: {
-    color: "#7F2E14",
-    fontSize: 12,
-    fontWeight: "800",
-    letterSpacing: 1,
-    textTransform: "uppercase",
-  },
-  errorText: {
-    color: "#602512",
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  noticeCard: {
-    borderRadius: 20,
-    backgroundColor: "#E5F1DE",
-    borderWidth: 1,
-    borderColor: "#B8D4AA",
-    paddingHorizontal: 18,
-    paddingVertical: 16,
-    gap: 8,
-  },
-  noticeLabel: {
-    color: "#355B22",
-    fontSize: 12,
-    fontWeight: "800",
-    letterSpacing: 1,
-    textTransform: "uppercase",
-  },
-  noticeText: {
-    color: "#28451A",
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  loadingState: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingVertical: 12,
-  },
-  loadingText: {
-    color: "#415255",
-    fontSize: 14,
-  },
-  emptyState: {
-    borderRadius: 22,
-    backgroundColor: "#F6EFE1",
-    paddingHorizontal: 18,
-    paddingVertical: 18,
-    borderWidth: 1,
-    borderColor: "#E2D8C3",
-  },
-  emptyTitle: {
-    color: "#1D2A2C",
-    fontSize: 18,
-    fontWeight: "700",
-    marginBottom: 6,
-  },
-  emptyBody: {
-    color: "#5B615D",
-    fontSize: 14,
-    lineHeight: 20,
   },
   filterRow: {
     flexDirection: "row",
@@ -1292,69 +916,6 @@ const styles = StyleSheet.create({
   },
   filterChipTextActive: {
     color: "#FFF8EE",
-  },
-  filterCountPill: {
-    minWidth: 24,
-    borderRadius: 999,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    backgroundColor: "#FFF9F0",
-    alignItems: "center",
-  },
-  filterCountPillActive: {
-    backgroundColor: "#33594F",
-  },
-  filterCountText: {
-    color: "#5B615D",
-    fontSize: 11,
-    fontWeight: "800",
-  },
-  filterCountTextActive: {
-    color: "#FFF8EE",
-  },
-  taskSections: {
-    gap: 18,
-  },
-  taskSection: {
-    gap: 12,
-  },
-  taskSectionHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  taskSectionTitle: {
-    color: "#1D2A2C",
-    fontSize: 18,
-    fontWeight: "700",
-  },
-  taskSectionCount: {
-    color: "#6A6258",
-    fontSize: 12,
-    fontWeight: "800",
-    textTransform: "uppercase",
-  },
-  groupEmptyState: {
-    borderRadius: 18,
-    backgroundColor: "#F6EFE1",
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    borderWidth: 1,
-    borderColor: "#E2D8C3",
-    gap: 6,
-  },
-  groupEmptyTitle: {
-    color: "#1D2A2C",
-    fontSize: 16,
-    fontWeight: "700",
-  },
-  groupEmptyBody: {
-    color: "#5B615D",
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  taskList: {
-    gap: 12,
   },
   taskCard: {
     borderRadius: 18,
