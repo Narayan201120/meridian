@@ -178,6 +178,55 @@ async def test_confirm_block_writes_and_updates_task(client, db_session):
 
 
 @pytest.mark.asyncio
+async def test_confirm_block_twice_creates_single_google_event(client, db_session):
+    from uuid import UUID
+
+    from sqlalchemy import select
+
+    from app.models import CalendarConnection, CalendarEvent, TaskCalendarBlock
+
+    create_resp = await client.post("/api/v1/tasks", json={"title": "Confirm twice", "estimated_duration_minutes": 30})
+    assert create_resp.status_code == 201
+    task_id = create_resp.json()["id"]
+    task_user_id = UUID(create_resp.json()["user_id"])
+    conn = CalendarConnection(user_id=task_user_id, provider="google", provider_account_id="primary", status="active")
+    db_session.add(conn)
+    await db_session.commit()
+    await db_session.refresh(conn)
+
+    start = datetime.now(timezone.utc) + timedelta(days=1, hours=3)
+    start = start.replace(minute=0, second=0, microsecond=0)
+    end = start + timedelta(minutes=30)
+    block_resp = await client.post(f"/api/v1/tasks/{task_id}/blocks", json={"suggested_start_at": start.isoformat(), "suggested_end_at": end.isoformat()})
+    assert block_resp.status_code == 201, block_resp.text
+    block_id = block_resp.json()["id"]
+
+    with patch("app.services.scheduling.GoogleCalendarService.create_calendar_event", new_callable=AsyncMock) as mock_create:
+        mock_create.return_value = {"id": "evt_idem_123", "status": "confirmed"}
+        first = await client.post(f"/api/v1/tasks/{task_id}/blocks/{block_id}/confirm")
+        assert first.status_code == 200, first.text
+        assert first.json()["status"] == "confirmed"
+        assert first.json()["calendar_event_id"] is not None
+
+        second = await client.post(f"/api/v1/tasks/{task_id}/blocks/{block_id}/confirm")
+        assert second.status_code == 200, second.text
+        assert second.json()["status"] == "confirmed"
+        assert second.json()["calendar_event_id"] == first.json()["calendar_event_id"]
+
+        assert mock_create.call_count == 1
+
+    events = await db_session.scalars(
+        select(CalendarEvent).where(CalendarEvent.calendar_connection_id == conn.id, CalendarEvent.external_event_id == "evt_idem_123")
+    )
+    rows = list(events.all())
+    assert len(rows) == 1
+    block_row = await db_session.scalar(select(TaskCalendarBlock).where(TaskCalendarBlock.id == UUID(block_id)))
+    assert block_row is not None
+    assert block_row.calendar_event_id == rows[0].id
+    assert block_row.status == "confirmed"
+
+
+@pytest.mark.asyncio
 async def test_confirm_block_not_found(client, db_session):
     from uuid import UUID
 

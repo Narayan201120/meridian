@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from sqlalchemy import select
 
-from app.models.calendar_connection import NotificationDelivery, NotificationDeliveryStatus, Reminder, ReminderStatus, ReminderType, TaskCalendarBlock, TaskCalendarBlockStatus
+from app.models.calendar_connection import CalendarEvent, NotificationDelivery, NotificationDeliveryStatus, Reminder, ReminderStatus, ReminderType, TaskCalendarBlock, TaskCalendarBlockStatus
 from app.models.task import TaskStatus
 from app.repositories.tasks import TaskRepository
 from app.schemas.calendar import SuggestedBlock
@@ -16,6 +16,8 @@ from app.services.google_calendar import GoogleCalendarService
 WORK_START_HOUR = 9
 WORK_END_HOUR = 18
 SLOT_GRANULARITY_MINUTES = 15
+# PENDING_WRITE newer than this is treated as an in-flight Google write.
+PENDING_WRITE_IN_FLIGHT_WINDOW = timedelta(minutes=5)
 
 
 def _parse_busy_intervals(raw_busy: list[dict[str, str]]) -> list[tuple[datetime, datetime]]:
@@ -243,44 +245,108 @@ class SchedulingService:
         result = await self.session.scalars(select(TaskCalendarBlock).where(TaskCalendarBlock.user_id == user_id, TaskCalendarBlock.task_id == task_id).order_by(TaskCalendarBlock.created_at.desc()))
         return list(result.all())
 
-    async def confirm_block(self, *, user_id: UUID, task_id: UUID, block_id: UUID) -> TaskCalendarBlock:
-        task = await self.tasks.get_for_user(task_id=task_id, user_id=user_id)
-        if task is None or task.deleted_at is not None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found.")
-        block = await self.session.scalar(select(TaskCalendarBlock).where(TaskCalendarBlock.id == block_id, TaskCalendarBlock.user_id == user_id, TaskCalendarBlock.task_id == task_id))
-        if block is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Calendar block not found.")
-        if block.status == TaskCalendarBlockStatus.CONFIRMED:
-            return block
-        if block.status == TaskCalendarBlockStatus.CANCELED:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Block was canceled.")
-        connection = await self.calendar.get_connection(user_id)
-        if not connection or connection.status != "active":
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No active calendar connection. Connect Google Calendar first.")
-        # Mark intent before external call
-        block.status = TaskCalendarBlockStatus.PENDING_WRITE
-        block.write_requested_at = datetime.now(timezone.utc)
-        block.approved_at = datetime.now(timezone.utc)
-        block.calendar_connection_id = connection.id
-        await self.session.commit()
-        await self.session.refresh(block)
-        try:
-            event = await self.calendar.create_calendar_event(user_id, task.title, block.suggested_start_at, block.suggested_end_at)
-        except HTTPException as exc:
-            block.status = TaskCalendarBlockStatus.WRITE_FAILED
-            block.last_error_message = str(exc.detail)[:500]
+    @staticmethod
+    def _extract_external_event_id(block: TaskCalendarBlock) -> str | None:
+        reason = block.suggestion_reason or {}
+        if isinstance(reason, dict):
+            ext = reason.get("external_event_id")
+            if isinstance(ext, str) and ext:
+                return ext
+        return None
+
+    @staticmethod
+    def _is_recent_write(write_requested_at: datetime | None, now: datetime) -> bool:
+        if write_requested_at is None:
+            return False
+        ts = write_requested_at
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        return (now - ts) < PENDING_WRITE_IN_FLIGHT_WINDOW
+
+    async def _find_existing_event(self, *, block: TaskCalendarBlock, connection_id) -> CalendarEvent | None:
+        if block.calendar_event_id is not None:
+            existing = await self.session.scalar(select(CalendarEvent).where(CalendarEvent.id == block.calendar_event_id))
+            if existing is not None:
+                return existing
+        ext_id = self._extract_external_event_id(block)
+        if ext_id:
+            existing = await self.session.scalar(
+                select(CalendarEvent).where(
+                    CalendarEvent.calendar_connection_id == connection_id,
+                    CalendarEvent.external_event_id == ext_id,
+                )
+            )
+            if existing is not None:
+                return existing
+        return None
+
+    async def _upsert_event_from_google(
+        self,
+        *,
+        user_id: UUID,
+        connection_id,
+        task_title: str,
+        block: TaskCalendarBlock,
+        event: dict,
+    ) -> CalendarEvent | None:
+        ext_id = event.get("id") if isinstance(event, dict) else None
+        if not isinstance(ext_id, str) or not ext_id:
+            return None
+        now = datetime.now(timezone.utc)
+        existing = await self.session.scalar(
+            select(CalendarEvent).where(
+                CalendarEvent.calendar_connection_id == connection_id,
+                CalendarEvent.external_event_id == ext_id,
+            )
+        )
+        status_value = event.get("status", "confirmed") if isinstance(event, dict) else "confirmed"
+        if existing is not None:
+            existing.title = task_title
+            existing.starts_at = block.suggested_start_at
+            existing.ends_at = block.suggested_end_at
+            existing.status = status_value
+            existing.raw_payload = event
+            existing.last_synced_at = now
+            existing.updated_at = now
             await self.session.commit()
-            await self.session.refresh(block)
-            raise
+            await self.session.refresh(existing)
+            return existing
+        row = CalendarEvent(
+            user_id=user_id,
+            calendar_connection_id=connection_id,
+            external_event_id=ext_id,
+            title=task_title,
+            starts_at=block.suggested_start_at,
+            ends_at=block.suggested_end_at,
+            is_all_day=False,
+            status=status_value,
+            raw_payload=event,
+            last_synced_at=now,
+        )
+        self.session.add(row)
+        await self.session.commit()
+        await self.session.refresh(row)
+        return row
+
+    async def _finalize_with_existing_event(self, *, task, block: TaskCalendarBlock, event: CalendarEvent, connection_id) -> TaskCalendarBlock:
+        now = datetime.now(timezone.utc)
+        block.calendar_event_id = event.id
+        block.calendar_connection_id = connection_id
         block.status = TaskCalendarBlockStatus.CONFIRMED
-        block.write_completed_at = datetime.now(timezone.utc)
+        block.write_completed_at = now
         block.last_error_message = None
-        # Persist external event id if returned; store in suggestion_reason for now (calendar_event_id stays nullable until events table sync)
-        if isinstance(event, dict) and event.get("id"):
-            block.suggestion_reason = {**block.suggestion_reason, "external_event_id": event["id"]}
+        reason = block.suggestion_reason or {}
+        if not isinstance(reason, dict):
+            reason = {}
+        if reason.get("external_event_id") != event.external_event_id:
+            block.suggestion_reason = {**reason, "external_event_id": event.external_event_id}
         await self.session.commit()
         await self.session.refresh(block)
-        # Update task to scheduled with block start time (explicit user approval path)
+        await self._sync_task_for_confirmation(task, block)
+        await self._ensure_block_reminder(task, block)
+        return block
+
+    async def _sync_task_for_confirmation(self, task, block: TaskCalendarBlock) -> None:
         suggested_start = block.suggested_start_at
         if suggested_start.tzinfo is None:
             suggested_start = suggested_start.replace(tzinfo=timezone.utc)
@@ -294,6 +360,80 @@ class SchedulingService:
                 task.completed_at = task.completed_at or datetime.now(timezone.utc)
         await self.session.commit()
         await self.session.refresh(task)
+
+    async def confirm_block(self, *, user_id: UUID, task_id: UUID, block_id: UUID) -> TaskCalendarBlock:
+        task = await self.tasks.get_for_user(task_id=task_id, user_id=user_id)
+        if task is None or task.deleted_at is not None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found.")
+        block = await self.session.scalar(select(TaskCalendarBlock).where(TaskCalendarBlock.id == block_id, TaskCalendarBlock.user_id == user_id, TaskCalendarBlock.task_id == task_id))
+        if block is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Calendar block not found.")
+        if block.status == TaskCalendarBlockStatus.CONFIRMED:
+            # Idempotent: already confirmed — link legacy rows, never call Google.
+            if block.calendar_event_id is None:
+                linked = await self._find_existing_event(block=block, connection_id=block.calendar_connection_id)
+                if linked is not None:
+                    block.calendar_event_id = linked.id
+                    reason = block.suggestion_reason or {}
+                    if isinstance(reason, dict) and reason.get("external_event_id") != linked.external_event_id:
+                        block.suggestion_reason = {**reason, "external_event_id": linked.external_event_id}
+                    await self.session.commit()
+                    await self.session.refresh(block)
+            return block
+        if block.status == TaskCalendarBlockStatus.CANCELED:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Block was canceled.")
+        connection = await self.calendar.get_connection(user_id)
+        if not connection or connection.status != "active":
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No active calendar connection. Connect Google Calendar first.")
+        # Idempotent: a CalendarEvent row already exists for this block — link and return, no Google call.
+        existing = await self._find_existing_event(block=block, connection_id=connection.id)
+        if existing is not None:
+            return await self._finalize_with_existing_event(task=task, block=block, event=existing, connection_id=connection.id)
+        # Guard concurrent retry: recent PENDING_WRITE is in-flight — re-check done above, avoid second Google write.
+        if block.status == TaskCalendarBlockStatus.PENDING_WRITE and self._is_recent_write(
+            block.write_requested_at, datetime.now(timezone.utc)
+        ):
+            return block
+        # Mark intent before external call
+        block.status = TaskCalendarBlockStatus.PENDING_WRITE
+        block.write_requested_at = datetime.now(timezone.utc)
+        block.approved_at = datetime.now(timezone.utc)
+        block.calendar_connection_id = connection.id
+        await self.session.commit()
+        await self.session.refresh(block)
+        # Race guard: re-check for an existing event before creating a second Google event.
+        existing = await self._find_existing_event(block=block, connection_id=connection.id)
+        if existing is not None:
+            return await self._finalize_with_existing_event(task=task, block=block, event=existing, connection_id=connection.id)
+        try:
+            event = await self.calendar.create_calendar_event(user_id, task.title, block.suggested_start_at, block.suggested_end_at)
+        except HTTPException as exc:
+            block.status = TaskCalendarBlockStatus.WRITE_FAILED
+            block.last_error_message = str(exc.detail)[:500]
+            await self.session.commit()
+            await self.session.refresh(block)
+            raise
+        calendar_event_row = None
+        if isinstance(event, dict) and event.get("id"):
+            calendar_event_row = await self._upsert_event_from_google(
+                user_id=user_id,
+                connection_id=connection.id,
+                task_title=task.title,
+                block=block,
+                event=event,
+            )
+        block.status = TaskCalendarBlockStatus.CONFIRMED
+        block.write_completed_at = datetime.now(timezone.utc)
+        block.last_error_message = None
+        if calendar_event_row is not None:
+            block.calendar_event_id = calendar_event_row.id
+        # Persist external event id; keep suggestion_reason JSON as mirror.
+        if isinstance(event, dict) and event.get("id"):
+            block.suggestion_reason = {**(block.suggestion_reason or {}), "external_event_id": event["id"]}
+        await self.session.commit()
+        await self.session.refresh(block)
+        # Update task to scheduled with block start time (explicit user approval path)
+        await self._sync_task_for_confirmation(task, block)
         # Create scheduled_block reminder + ensure due_date reminder via task sync
         await self._ensure_block_reminder(task, block)
         return block
