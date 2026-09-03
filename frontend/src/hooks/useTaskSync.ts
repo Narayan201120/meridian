@@ -12,6 +12,10 @@ import {
 } from "../lib/tasks";
 import type { AuthSession } from "../lib/auth";
 
+// Background push is not yet implemented — foreground 30s poll only.
+// Reminder deliveries from the dispatch flow below are local-only.
+const deliveryProvider = "local" as const;
+
 export function useTaskSync(authSession: AuthSession | null, onError?: (m: string | null) => void) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -163,6 +167,7 @@ export function useTaskSync(authSession: AuthSession | null, onError?: (m: strin
     remindersByTask,
     pendingReminders,
     dispatchNotice,
+    deliveryProvider,
     setDispatchNotice,
     setPendingReminders,
     loadTasks,

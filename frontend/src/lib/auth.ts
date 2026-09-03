@@ -1,3 +1,6 @@
+import { Platform } from "react-native";
+import * as SecureStore from "expo-secure-store";
+
 type RuntimeShape = typeof globalThis & {
   process?: {
     env?: Record<string, string | undefined>;
@@ -38,6 +41,10 @@ export const authRuntime = {
   isConfigured: supabaseUrl.length > 0 && publishableKey.length > 0,
 };
 
+function isNative(): boolean {
+  return Platform.OS !== "web";
+}
+
 function getWebStorage(): Storage | null {
   if (typeof localStorage === "undefined") {
     return null;
@@ -62,7 +69,46 @@ function normalizeSession(payload: AuthPayload): AuthSession {
   };
 }
 
-function persistSession(session: AuthSession | null) {
+function parseStoredSession(raw: string | null): AuthSession | null {
+  if (raw === null) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(raw) as AuthSession;
+  } catch {
+    return null;
+  }
+}
+
+function readWebSession(): AuthSession | null {
+  const storage = getWebStorage();
+  if (storage === null) {
+    return null;
+  }
+
+  const rawSession = storage.getItem(sessionStorageKey);
+  const session = parseStoredSession(rawSession);
+  if (session === null && rawSession !== null) {
+    storage.removeItem(sessionStorageKey);
+  }
+  return session;
+}
+
+async function persistSession(session: AuthSession | null) {
+  if (isNative()) {
+    try {
+      if (session === null) {
+        await SecureStore.deleteItemAsync(sessionStorageKey);
+      } else {
+        await SecureStore.setItemAsync(sessionStorageKey, JSON.stringify(session));
+      }
+    } catch {
+      // SecureStore may be unavailable (e.g. web fallback); ignore persistence errors.
+    }
+    return;
+  }
+
   const storage = getWebStorage();
 
   if (storage === null) {
@@ -77,33 +123,81 @@ function persistSession(session: AuthSession | null) {
   storage.setItem(sessionStorageKey, JSON.stringify(session));
 }
 
+export async function loadPersistedSession(): Promise<AuthSession | null> {
+  if (inMemorySession !== null) {
+    return inMemorySession;
+  }
+
+  if (isNative()) {
+    try {
+      const rawSession = await SecureStore.getItemAsync(sessionStorageKey);
+      const session = parseStoredSession(rawSession);
+      if (session !== null) {
+        inMemorySession = session;
+        return inMemorySession;
+      }
+      if (rawSession !== null) {
+        try {
+          await SecureStore.deleteItemAsync(sessionStorageKey);
+        } catch {
+          // Ignore cleanup errors for corrupt entries.
+        }
+      }
+    } catch {
+      // Fall through to localStorage fallback below.
+    }
+
+    const fallback = readWebSession();
+    if (fallback !== null) {
+      inMemorySession = fallback;
+    }
+    return inMemorySession;
+  }
+
+  const session = readWebSession();
+  if (session !== null) {
+    inMemorySession = session;
+  }
+  return inMemorySession;
+}
+
 export function getCurrentSession(): AuthSession | null {
   if (inMemorySession !== null) {
     return inMemorySession;
   }
 
-  const storage = getWebStorage();
-  if (storage === null) {
-    return null;
-  }
-
-  const rawSession = storage.getItem(sessionStorageKey);
-  if (rawSession === null) {
-    return null;
-  }
-
-  try {
-    inMemorySession = JSON.parse(rawSession) as AuthSession;
+  if (isNative()) {
+    // SecureStore is async; call loadPersistedSession() on startup to hydrate.
+    // Fall back to a synchronous localStorage read when available.
+    const fallback = readWebSession();
+    if (fallback !== null) {
+      inMemorySession = fallback;
+    }
     return inMemorySession;
-  } catch {
-    storage.removeItem(sessionStorageKey);
-    return null;
   }
+
+  const session = readWebSession();
+  if (session !== null) {
+    inMemorySession = session;
+  }
+  return inMemorySession;
 }
 
-export function clearCurrentSession() {
+export async function clearCurrentSession() {
   inMemorySession = null;
-  persistSession(null);
+
+  if (isNative()) {
+    try {
+      await SecureStore.deleteItemAsync(sessionStorageKey);
+    } catch {
+      // Ignore errors when clearing native storage.
+    }
+  }
+
+  const storage = getWebStorage();
+  if (storage !== null) {
+    storage.removeItem(sessionStorageKey);
+  }
 }
 
 export function getAccessToken(): string | null {
@@ -142,7 +236,7 @@ export async function signInWithPassword(email: string, password: string): Promi
   const payload = (await response.json()) as AuthPayload;
   const session = normalizeSession(payload);
   inMemorySession = session;
-  persistSession(session);
+  await persistSession(session);
   return session;
 }
 
@@ -163,5 +257,5 @@ export async function signOut(): Promise<void> {
     }
   }
 
-  clearCurrentSession();
+  await clearCurrentSession();
 }
