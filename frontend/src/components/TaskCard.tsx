@@ -1,3 +1,7 @@
+// Legacy simple card: TaskCard handles toggle/delete/suggest only.
+// Canonical is TaskCardEditor (rich editor with edit + schedule flows).
+// Kept temporarily for the filtered tabs (inbox/scheduled/due_now/completed);
+// new work should use TaskCardEditor via useTaskMutations.
 import React, { useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { deleteTask, describeTaskError, suggestBlocks, updateTask, type SuggestedBlock, type Task } from "../lib/tasks";

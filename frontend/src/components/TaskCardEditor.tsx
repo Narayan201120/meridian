@@ -1,3 +1,7 @@
+// Canonical task card: TaskCardEditor is the rich editor (edit details,
+// schedule/reschedule/unschedule, suggest/apply with calendar-block support).
+// Prefer it for all task rendering. TaskCard (simple) is legacy for the
+// filtered tabs only — do not extend it; migrate those tabs to this editor.
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import type { Reminder, SuggestedBlock, Task } from "../lib/tasks";
 
