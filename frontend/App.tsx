@@ -19,6 +19,7 @@ import { SectionHeader } from "./src/components/ui/SectionHeader";
 import { StatusBanner } from "./src/components/ui/StatusBanner";
 import { CreateTaskForm } from "./src/components/CreateTaskForm";
 import { VoiceCaptureCard } from "./src/components/VoiceCaptureCard";
+import { TaskList } from "./src/components/TaskList";
 
 import {
   authRuntime,
@@ -52,65 +53,6 @@ import {
 } from "./src/lib/tasks";
 
 type TaskListFilter = "all" | Task["status"];
-
-const taskFilters: Array<{ key: TaskListFilter; label: string }> = [
-  { key: "all", label: "All" },
-  { key: "inbox", label: "Inbox" },
-  { key: "due_now", label: "Due now" },
-  { key: "scheduled", label: "Scheduled" },
-  { key: "completed", label: "Completed" },
-];
-
-function getTaskFilterCount(tasks: Task[], filter: TaskListFilter) {
-  if (filter === "all") {
-    return tasks.length;
-  }
-
-  return tasks.filter((task) => task.status === filter).length;
-}
-
-function getTaskGroups(tasks: Task[], activeFilter: TaskListFilter) {
-  const baseGroups = [
-    {
-      key: "inbox" as const,
-      label: "Inbox",
-      emptyTitle: "Inbox is clear",
-      emptyBody: "New tasks and reopened work will land here first.",
-    },
-    {
-      key: "due_now" as const,
-      label: "Due now",
-      emptyTitle: "Nothing is due right now",
-      emptyBody: "When scheduled work activates, it moves here and asks for attention.",
-    },
-    {
-      key: "scheduled" as const,
-      label: "Scheduled",
-      emptyTitle: "Nothing is scheduled",
-      emptyBody: "This is where calendar-aware work will show up next.",
-    },
-    {
-      key: "completed" as const,
-      label: "Completed",
-      emptyTitle: "Nothing completed yet",
-      emptyBody: "Completed work will stay visible here until you archive it.",
-    },
-  ];
-
-  if (activeFilter !== "all") {
-    return baseGroups
-      .filter((group) => group.key === activeFilter)
-      .map((group) => ({
-        ...group,
-        tasks: tasks.filter((task) => task.status === group.key),
-      }));
-  }
-
-  return baseGroups.map((group) => ({
-    ...group,
-    tasks: tasks.filter((task) => task.status === group.key),
-  }));
-}
 
 function formatDateTimeInputValue(value: string | null) {
   if (!value) {
@@ -968,8 +910,6 @@ export default function App() {
     );
   }
 
-  const taskGroups = getTaskGroups(tasks, activeTaskFilter);
-
   return (
     <SafeAreaProvider>
       <StatusBar barStyle="dark-content" />
@@ -1097,90 +1037,13 @@ export default function App() {
                 </View>
               ) : null}
 
-              <View className="bg-[#FFFDF8] border border-[#E2E8F0] rounded-2xl p-6 md:p-8 shadow-sm gap-4">
-                <Text style={styles.cardEyebrow}>Task list</Text>
-                <Text style={styles.sectionTitle}>Shape the work</Text>
-                <Text style={styles.sectionBody}>
-                  Meridian needs more than a raw list. Filter by task state, then work from a
-                  clearer execution view.
-                </Text>
-
-                <View style={styles.filterRow}>
-                  {taskFilters.map((filter) => {
-                    const isActive = activeTaskFilter === filter.key;
-
-                    return (
-                      <Pressable
-                        key={filter.key}
-                        style={[styles.filterChip, isActive ? styles.filterChipActive : null]}
-                        onPress={() => setActiveTaskFilter(filter.key)}
-                      >
-                        <Text
-                          style={[
-                            styles.filterChipText,
-                            isActive ? styles.filterChipTextActive : null,
-                          ]}
-                        >
-                          {filter.label}
-                        </Text>
-                        <View
-                          style={[
-                            styles.filterCountPill,
-                            isActive ? styles.filterCountPillActive : null,
-                          ]}
-                        >
-                          <Text
-                            style={[
-                              styles.filterCountText,
-                              isActive ? styles.filterCountTextActive : null,
-                            ]}
-                          >
-                            {getTaskFilterCount(tasks, filter.key)}
-                          </Text>
-                        </View>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-
-                {isLoading ? (
-                  <View style={styles.loadingState}>
-                    <ActivityIndicator size="small" color="#132A24" />
-                    <Text style={styles.loadingText}>Loading tasks...</Text>
-                  </View>
-                ) : null}
-
-                {!isLoading && tasks.length === 0 ? (
-                  <View style={styles.emptyState}>
-                    <Text style={styles.emptyTitle}>No tasks yet</Text>
-                    <Text style={styles.emptyBody}>
-                      Add a task above to seed the first real workflow in the app.
-                    </Text>
-                  </View>
-                ) : null}
-
-                {!isLoading ? (
-                  <View style={styles.taskSections}>
-                    {taskGroups.map((group) => (
-                      <View key={group.key} style={styles.taskSection}>
-                        <View style={styles.taskSectionHeader}>
-                          <Text style={styles.taskSectionTitle}>{group.label}</Text>
-                          <Text style={styles.taskSectionCount}>{group.tasks.length}</Text>
-                        </View>
-
-                        {group.tasks.length === 0 ? (
-                          <View style={styles.groupEmptyState}>
-                            <Text style={styles.groupEmptyTitle}>{group.emptyTitle}</Text>
-                            <Text style={styles.groupEmptyBody}>{group.emptyBody}</Text>
-                          </View>
-                        ) : (
-                          <View style={styles.taskList}>{group.tasks.map(renderTaskCard)}</View>
-                        )}
-                      </View>
-                    ))}
-                  </View>
-                ) : null}
-              </View>
+              <TaskList
+                activeFilter={activeTaskFilter}
+                setActiveFilter={setActiveTaskFilter}
+                tasks={tasks}
+                isLoading={isLoading}
+                renderCard={renderTaskCard}
+              />
             </>
           )}
 
