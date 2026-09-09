@@ -365,7 +365,13 @@ class SchedulingService:
         task = await self.tasks.get_for_user(task_id=task_id, user_id=user_id)
         if task is None or task.deleted_at is not None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found.")
-        block = await self.session.scalar(select(TaskCalendarBlock).where(TaskCalendarBlock.id == block_id, TaskCalendarBlock.user_id == user_id, TaskCalendarBlock.task_id == task_id))
+        # Row lock serializes concurrent confirms on Postgres (no-op on SQLite):
+        # the second transaction waits here until the first commits its PENDING_WRITE mark.
+        block = await self.session.scalar(
+            select(TaskCalendarBlock)
+            .where(TaskCalendarBlock.id == block_id, TaskCalendarBlock.user_id == user_id, TaskCalendarBlock.task_id == task_id)
+            .with_for_update()
+        )
         if block is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Calendar block not found.")
         if block.status == TaskCalendarBlockStatus.CONFIRMED:
@@ -408,6 +414,29 @@ class SchedulingService:
         try:
             event = await self.calendar.create_calendar_event(user_id, task.title, block.suggested_start_at, block.suggested_end_at)
         except HTTPException as exc:
+            # Ambiguous failure: Google may have created the event while the response
+            # was lost. Reconcile via events.list before recording a failure, so a
+            # retry adopts the orphaned event instead of creating a duplicate.
+            orphan = await self.calendar.find_matching_event(user_id, task.title, block.suggested_start_at, block.suggested_end_at)
+            if orphan is not None:
+                calendar_event_row = await self._upsert_event_from_google(
+                    user_id=user_id,
+                    connection_id=connection.id,
+                    task_title=task.title,
+                    block=block,
+                    event=orphan,
+                )
+                block.status = TaskCalendarBlockStatus.CONFIRMED
+                block.write_completed_at = datetime.now(timezone.utc)
+                block.last_error_message = None
+                if calendar_event_row is not None:
+                    block.calendar_event_id = calendar_event_row.id
+                block.suggestion_reason = {**(block.suggestion_reason or {}), "external_event_id": orphan["id"], "reconciled": True}
+                await self.session.commit()
+                await self.session.refresh(block)
+                await self._sync_task_for_confirmation(task, block)
+                await self._ensure_block_reminder(task, block)
+                return block
             block.status = TaskCalendarBlockStatus.WRITE_FAILED
             block.last_error_message = str(exc.detail)[:500]
             await self.session.commit()

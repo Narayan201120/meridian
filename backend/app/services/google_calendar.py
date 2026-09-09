@@ -102,6 +102,48 @@ class GoogleCalendarService:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Google Calendar event creation failed: {response.text[:200]}")
         return response.json()
 
+    async def find_matching_event(self, user_id: UUID, summary: str, start_at: datetime, end_at: datetime) -> dict | None:
+        # Reconcile ambiguous failures: Google may have created the event while the
+        # response was lost. events.insert has no idempotency key, so match by title + start.
+        connection = await self.get_connection(user_id)
+        if not connection or connection.status != "active":
+            return None
+        try:
+            access_token = await self.get_valid_access_token(connection)
+        except HTTPException:
+            return None
+        if start_at.tzinfo is None:
+            start_at = start_at.replace(tzinfo=timezone.utc)
+        if end_at.tzinfo is None:
+            end_at = end_at.replace(tzinfo=timezone.utc)
+        params = {
+            "timeMin": start_at.isoformat().replace("+00:00", "Z"),
+            "timeMax": end_at.isoformat().replace("+00:00", "Z"),
+            "singleEvents": "true",
+            "orderBy": "startTime",
+            "q": summary,
+            "maxResults": "10",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                response = await client.get(
+                    GOOGLE_CALENDAR_EVENTS_URL,
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    params=params,
+                )
+        except Exception:
+            return None
+        if response.is_error:
+            return None
+        try:
+            items = response.json().get("items", [])
+        except Exception:
+            return None
+        matches = [i for i in items if isinstance(i, dict) and i.get("summary") == summary and i.get("id")]
+        if len(matches) == 1:
+            return matches[0]
+        return None
+
     async def get_connection(self, user_id: UUID) -> CalendarConnection | None:
         return await self.session.scalar(
             select(CalendarConnection).where(
