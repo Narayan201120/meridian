@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, DateTime, Enum as SqlEnum, JSON, String, Text, text
+from sqlalchemy import Boolean, DateTime, Enum as SqlEnum, JSON, Text, text
 from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -20,6 +20,17 @@ class TaskCalendarBlockStatus(StrEnum):
     CONFIRMED = "confirmed"
     WRITE_FAILED = "write_failed"
     CANCELED = "canceled"
+
+
+class CalendarProvider(StrEnum):
+    GOOGLE = "google"
+    OUTLOOK = "outlook"
+
+
+class CalendarConnectionStatus(StrEnum):
+    ACTIVE = "active"
+    REVOKED = "revoked"
+    ERROR = "error"
 
 
 class ReminderType(StrEnum):
@@ -59,8 +70,18 @@ class CalendarConnection(Base):
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4, server_default=text("gen_random_uuid()"))
     user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
-    provider: Mapped[str] = mapped_column(String(32), nullable=False, default="google")
-    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    provider: Mapped[CalendarProvider] = mapped_column(
+        SqlEnum(CalendarProvider, name="calendar_provider", native_enum=True, create_type=False, values_callable=_enum_values),
+        nullable=False,
+        default=CalendarProvider.GOOGLE,
+        server_default=CalendarProvider.GOOGLE.value,
+    )
+    status: Mapped[CalendarConnectionStatus] = mapped_column(
+        SqlEnum(CalendarConnectionStatus, name="calendar_connection_status", native_enum=True, create_type=False, values_callable=_enum_values),
+        nullable=False,
+        default=CalendarConnectionStatus.ACTIVE,
+        server_default=CalendarConnectionStatus.ACTIVE.value,
+    )
     provider_account_id: Mapped[str] = mapped_column(Text, nullable=False, default="primary")
     provider_email: Mapped[str | None] = mapped_column(Text)
     access_token_ciphertext: Mapped[str | None] = mapped_column(Text)

@@ -65,3 +65,12 @@ async def test_calendar_connection_scopes_uses_postgres_array() -> None:
     compiled_sqlite = str(col_type.compile(dialect=sqlite.dialect())).upper()
     assert "TEXT" in compiled_pg
     assert "JSON" in compiled_sqlite
+
+
+async def test_calendar_connection_provider_status_use_postgres_enums() -> None:
+    from sqlalchemy.dialects import postgresql
+
+    provider_pg = str(CalendarConnection.__table__.c.provider.type.compile(dialect=postgresql.dialect())).upper()
+    status_pg = str(CalendarConnection.__table__.c.status.type.compile(dialect=postgresql.dialect())).upper()
+    assert "CALENDAR_PROVIDER" in provider_pg
+    assert "CALENDAR_CONNECTION_STATUS" in status_pg
