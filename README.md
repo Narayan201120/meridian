@@ -5,17 +5,24 @@ AI-assisted productivity app for fast task capture, calendar-aware planning, and
 ## Current Repo State
 
 - `backend/`
-  - FastAPI scaffold
-  - async SQLAlchemy database session wiring
-  - task CRUD API
-  - Supabase JWT verification for protected task routes
+  - FastAPI service with versioned routes under `/api/v1`
+  - async SQLAlchemy with direct Postgres access (not Supabase REST)
+  - task CRUD with soft delete, mutation-log audit trail, and due-date reminders
+  - Supabase JWT verification for protected routes
+  - text + voice capture structuring (heuristic title/priority/duration/schedule-intent)
+  - Google Calendar OAuth (Fernet-encrypted tokens), free/busy, event sync cache, suggest-blocks, and user-approved block confirm with idempotent writes
+  - reminder dispatch + acknowledge flow (`pending` → `sent` → `acknowledged`)
+  - offline-first sync via task mutation log (`GET /api/v1/tasks/mutations?since=`)
 - `supabase/`
-  - initial Postgres schema migration
-  - local Supabase CLI config
+  - Postgres schema migrations (initial schema, `due_now` status, scopes `text[]` fix)
+  - local Supabase CLI config, RLS policies throughout
 - `frontend/`
-  - real Expo app scaffold using Bun
-  - Expo Router foundation with the task flow as the root route
-  - task capture, structuring, scheduling, foreground due-now refresh, and authenticated API mode
+  - real Expo app using Bun, Expo Router tab flow (`Home`, `Inbox`, `Scheduled`, `Due now`, `Completed`)
+  - NativeWind design system (ivory canvas, forest-green primary, 8pt grid, floating cards)
+  - task capture/voice forms, suggest-times UI, reminders with dispatch + ack, calendar sync
+  - WatermelonDB on-device task cache with offline create + auto-push on reconnect
+  - SecureStore session persistence on native, `localStorage` on web
+  - demo mode (local data) vs API mode (Supabase sign-in + bearer token)
 
 ## Backend Run
 From `backend/`:
@@ -76,13 +83,15 @@ To put the frontend into API mode instead of demo mode:
 5. Sign in through the app with a real Supabase user
 
 ## Database Foundation
-The initial SQL migration lives at:
+Migrations live in `supabase/migrations/`:
 
 ```text
-supabase/migrations/20260409193000_initial_schema.sql
+20260409193000_initial_schema.sql   (tables, enums, RLS, triggers)
+20260425101500_add_due_now_task_status.sql
+20260903121211_scopes_text_array.sql (calendar scopes text[] fix)
 ```
 
-It creates the first set of Meridian tables, enums, RLS policies, and helper triggers for:
+They create the Meridian tables, enums, RLS policies, and helper triggers for:
 - profiles
 - devices
 - tasks
@@ -94,7 +103,21 @@ It creates the first set of Meridian tables, enums, RLS policies, and helper tri
 - reminders
 - notification deliveries
 
-The migration assumes Supabase Auth is enabled and `auth.users` exists.
+The migrations assume Supabase Auth is enabled and `auth.users` exists.
+
+## Verification
+From `backend/` (venv active):
+
+```bash
+python -m pytest -q          # 59 tests
+python -m ruff check app tests
+```
+
+From `frontend/`:
+
+```bash
+bun run typecheck
+```
 
 ## Data Access Choice
 The backend uses direct Postgres access with async SQLAlchemy rather than calling Supabase over REST. That keeps business logic, transactions, and future multi-step workflows inside the FastAPI service.
