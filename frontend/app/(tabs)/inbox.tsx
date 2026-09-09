@@ -1,7 +1,7 @@
 import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useTasksContext } from "../../src/context/TasksContext";
-import TaskCard from "../../src/components/TaskCard";
+import TaskCardConnected from "../../src/components/TaskCardConnected";
 
 export default function InboxTab() {
   const { tasks, isLoading } = useTasksContext();
@@ -15,7 +15,7 @@ export default function InboxTab() {
         ) : inbox.length === 0 ? (
           <Text style={styles.empty}>Inbox is clear — new and reopened work lands here.</Text>
         ) : (
-          <View style={styles.list}>{inbox.map((t) => <TaskCard key={t.id} task={t} />)}</View>
+          <View style={styles.list}>{inbox.map((t) => <TaskCardConnected key={t.id} task={t} />)}</View>
         )}
       </ScrollView>
     </SafeAreaView>

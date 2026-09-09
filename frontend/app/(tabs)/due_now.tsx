@@ -1,7 +1,7 @@
 import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useTasksContext } from "../../src/context/TasksContext";
-import TaskCard from "../../src/components/TaskCard";
+import TaskCardConnected from "../../src/components/TaskCardConnected";
 export default function DueNowTab() {
   const { tasks, isLoading } = useTasksContext();
   const list = tasks.filter((t) => t.status === "due_now");
@@ -9,7 +9,7 @@ export default function DueNowTab() {
     <SafeAreaView style={styles.safeArea}>
       <ScrollView contentContainerStyle={styles.container}>
         <Text style={styles.title}>Due now</Text>
-        {isLoading ? <View style={styles.loading}><ActivityIndicator /><Text>Loading...</Text></View> : list.length === 0 ? <Text style={styles.empty}>Nothing is due right now — scheduled work moves here when it activates.</Text> : <View style={styles.list}>{list.map((t) => <TaskCard key={t.id} task={t} />)}</View>}
+        {isLoading ? <View style={styles.loading}><ActivityIndicator /><Text>Loading...</Text></View> : list.length === 0 ? <Text style={styles.empty}>Nothing is due right now — scheduled work moves here when it activates.</Text> : <View style={styles.list}>{list.map((t) => <TaskCardConnected key={t.id} task={t} />)}</View>}
       </ScrollView>
     </SafeAreaView>
   );

@@ -15,6 +15,8 @@ type TasksContextValue = {
   remindersByTask: Record<string, Reminder[]>;
   pendingReminders: Reminder[];
   refresh: () => Promise<void>;
+  setTasks: React.Dispatch<React.SetStateAction<Task[]>>;
+  refreshRemindersForTask: (taskId: string) => Promise<void>;
 };
 
 const TasksContext = createContext<TasksContextValue | null>(null);
@@ -110,8 +112,18 @@ export function TasksProvider({ children }: { children: React.ReactNode }) {
     };
   }, [authSession]);
 
+  const refreshRemindersForTask = useCallback(async (taskId: string) => {
+    if (!tasksRuntime.isApiMode || authSession === null) return;
+    try {
+      const rems = await listReminders(taskId);
+      setRemindersByTask((prev) => ({ ...prev, [taskId]: rems }));
+    } catch {
+      // ignore
+    }
+  }, [authSession]);
+
   return (
-    <TasksContext.Provider value={{ tasks, authSession, setAuthSession, isLoading, errorMessage, setErrorMessage, calendarStatus, remindersByTask, pendingReminders, refresh }}>
+    <TasksContext.Provider value={{ tasks, authSession, setAuthSession, isLoading, errorMessage, setErrorMessage, calendarStatus, remindersByTask, pendingReminders, refresh, setTasks, refreshRemindersForTask }}>
       {children}
     </TasksContext.Provider>
   );

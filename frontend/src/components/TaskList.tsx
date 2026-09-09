@@ -2,7 +2,7 @@ import { ActivityIndicator, Text, View } from "react-native";
 import { Chip } from "./ui/Chip";
 import { Card } from "./ui/Card";
 import { SectionHeader } from "./ui/SectionHeader";
-import TaskCard from "./TaskCard";
+import TaskCardConnected from "./TaskCardConnected";
 import type { Task } from "../lib/tasks";
 
 const filters = [
@@ -43,7 +43,7 @@ export function TaskList({
   renderCard?: (t: Task) => React.ReactNode;
 }) {
   const groups = getGroups(tasks, activeFilter);
-  const render = renderCard ?? ((t: Task) => <TaskCard key={t.id} task={t} />);
+  const render = renderCard ?? ((t: Task) => <TaskCardConnected key={t.id} task={t} />);
 
   return (
     <Card variant="floating" className="gap-4">
