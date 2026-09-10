@@ -1,17 +1,19 @@
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 import { useTasksContext } from "../../src/context/TasksContext";
 import TaskCardConnected from "../../src/components/TaskCardConnected";
+import { ListScreen } from "../../src/components/ListScreen";
+
 export default function CompletedTab() {
   const { tasks, isLoading } = useTasksContext();
-  const list = tasks.filter((t) => t.status === "completed");
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <ScrollView contentContainerStyle={styles.container}>
-        <Text style={styles.title}>Completed</Text>
-        {isLoading ? <View style={styles.loading}><ActivityIndicator /><Text>Loading...</Text></View> : list.length === 0 ? <Text style={styles.empty}>Nothing completed yet — completed work stays here.</Text> : <View style={styles.list}>{list.map((t) => <TaskCardConnected key={t.id} task={t} />)}</View>}
-      </ScrollView>
-    </SafeAreaView>
+    <ListScreen
+      eyebrow="DONE"
+      title="Completed"
+      body="Finished work, kept visible until archived."
+      emptyTitle="Nothing completed yet"
+      emptyBody="Completed work will stay visible here until you archive it."
+      isLoading={isLoading}
+      tasks={tasks.filter((t) => t.status === "completed")}
+      renderCard={(t) => <TaskCardConnected key={t.id} task={t} />}
+    />
   );
 }
-const styles = StyleSheet.create({ safeArea: { flex: 1, backgroundColor: "#F3EBDD" }, container: { padding: 20, gap: 12 }, title: { fontSize: 24, fontWeight: "800", color: "#1D2A2C" }, loading: { flexDirection: "row", gap: 10, alignItems: "center" }, empty: { color: "#5B615D" }, list: { gap: 12 } });
