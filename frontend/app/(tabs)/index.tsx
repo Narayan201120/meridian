@@ -138,7 +138,7 @@ export default function HomeTab() {
               <CreateTaskForm />
               <VoiceCaptureCard />
 
-              {errorMessage ? <StatusBanner variant="error" title="Current issue" message={errorMessage} actionLabel="Retry" onAction={() => void loadTasks()} /> : null}
+              {errorMessage ? <StatusBanner variant="error" title="Current issue" message={errorMessage} /> : null}
 
               {dueNotice ? <StatusBanner variant="success" title="Due now" message={dueNotice} /> : null}
 

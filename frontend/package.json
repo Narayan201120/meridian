@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@nozbe/watermelondb": "^0.28.0",
+    "@react-native-community/datetimepicker": "^9.2.1",
     "clsx": "^2.1.1",
     "expo": "~55.0.0",
     "expo-router": "~55.0.17",

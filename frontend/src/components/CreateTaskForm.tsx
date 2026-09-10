@@ -5,6 +5,7 @@ import { Button } from "./ui/Button";
 import { Chip } from "./ui/Chip";
 import { SectionHeader } from "./ui/SectionHeader";
 import { StatusBanner } from "./ui/StatusBanner";
+import { DateTimeField } from "./ui/DateTimeField";
 import { useTaskCreate } from "../hooks/useTaskCreate";
 
 export function CreateTaskForm() {
@@ -50,7 +51,7 @@ export function CreateTaskForm() {
           <Chip key={p} label={p} active={draftPriority === p} onPress={() => setDraftPriority(p)} />
         ))}
       </View>
-      {draftStatus === "scheduled" ? <InputField label="Schedule time" placeholder="Schedule time: YYYY-MM-DDTHH:MM" value={scheduledForInput} onChangeText={setScheduledForInput} autoCapitalize="none" /> : null}
+      {draftStatus === "scheduled" ? <DateTimeField label="Schedule time" value={scheduledForInput} onChange={setScheduledForInput} /> : null}
       <Button variant="primary" size="md" loading={isSubmitting} onPress={handleCreateTask}>
         {isSubmitting ? "Adding task..." : draftStatus === "scheduled" ? "Add scheduled task" : "Add task"}
       </Button>

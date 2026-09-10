@@ -23,6 +23,8 @@ export function StatusBanner({
     warning: "bg-amber-50 border-amber-200",
     info: "bg-slate-50 border-slate-200",
   };
+  const titleColor =
+    variant === "error" ? "text-redtext" : variant === "success" ? "text-successtext" : variant === "warning" ? "text-ambertext" : "text-slate500";
   const Icon = variant === "error" ? AlertCircle : variant === "success" ? CheckCircle2 : Info;
   // Icon colors mirror the banner text tokens (red-800 / successtext / slate500);
   // hex is required here because Lucide takes a runtime color prop, not a class.
@@ -32,7 +34,7 @@ export function StatusBanner({
     <View className={cn("flex-row items-start gap-3 rounded-xl border px-4 py-3", variants[variant], className)}>
       <Icon size={16} color={iconColor} style={{ marginTop: 2 }} />
       <View className="flex-1 gap-1">
-        {title ? <Text className="text-[12px] font-extrabold uppercase tracking-wide text-redtext">{title}</Text> : null}
+        {title ? <Text className={cn("text-[12px] font-extrabold uppercase tracking-wide", titleColor)}>{title}</Text> : null}
         <Text className="text-[14px] leading-5 text-neutral900">{message}</Text>
       </View>
       {actionLabel && onAction ? (

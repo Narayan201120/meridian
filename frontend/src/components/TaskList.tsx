@@ -13,12 +13,12 @@ const filters = [
   { key: "completed", label: "Completed" },
 ] as const;
 
-function getCount(tasks: any[], filter: string) {
+function getCount(tasks: Task[], filter: string) {
   if (filter === "all") return tasks.length;
   return tasks.filter((t) => t.status === filter).length;
 }
 
-function getGroups(tasks: any[], active: string) {
+function getGroups(tasks: Task[], active: string) {
   const base = [
     { key: "inbox", label: "Inbox", emptyTitle: "Inbox is clear", emptyBody: "New tasks and reopened work will land here first." },
     { key: "due_now", label: "Due now", emptyTitle: "Nothing is due right now", emptyBody: "When scheduled work activates, it moves here and asks for attention." },
@@ -54,9 +54,21 @@ export function TaskList({
         ))}
       </View>
       {isLoading ? (
-        <View className="flex-row items-center gap-2 py-3">
-          <ActivityIndicator size="small" color="#09261E" />
-          <Text className="text-bodytext text-[14px]">Loading tasks...</Text>
+        <View className="gap-3">
+          <View className="flex-row items-center gap-2 py-1">
+            <ActivityIndicator size="small" color="#09261E" />
+            <Text className="text-bodytext text-[14px]">Loading tasks...</Text>
+          </View>
+          {[0, 1, 2].map((i) => (
+            <View key={i} className="rounded-2xl bg-cardsurf border border-borderfaint p-4 gap-2">
+              <View className="h-4 rounded-full bg-borderfaint w-3/4" />
+              <View className="h-3 rounded-full bg-borderfaint w-1/2" />
+              <View className="flex-row gap-2">
+                <View className="h-9 w-24 rounded-full bg-borderfaint" />
+                <View className="h-9 w-24 rounded-full bg-borderfaint" />
+              </View>
+            </View>
+          ))}
         </View>
       ) : null}
       {!isLoading && tasks.length === 0 ? (
