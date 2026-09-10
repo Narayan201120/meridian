@@ -10,12 +10,16 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@expo-google-fonts/public-sans": "^0.4.2",
+    "@expo-google-fonts/space-grotesk": "^0.4.1",
     "@nozbe/watermelondb": "^0.28.0",
     "@react-native-community/datetimepicker": "^9.2.1",
     "clsx": "^2.1.1",
     "expo": "~55.0.0",
+    "expo-font": "^57.0.3",
     "expo-router": "~55.0.17",
     "expo-secure-store": "^57.0.3",
+    "expo-splash-screen": "^57.0.8",
     "lucide-react-native": "^1.33.0",
     "nativewind": "^4.2.6",
     "react": "19.2.0",

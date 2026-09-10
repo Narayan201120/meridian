@@ -35,7 +35,7 @@ export function StatusBanner({
       <Icon size={16} color={iconColor} style={{ marginTop: 2 }} />
       <View className="flex-1 gap-1">
         {title ? <Text className={cn("text-[12px] font-extrabold uppercase tracking-wide", titleColor)}>{title}</Text> : null}
-        <Text className="text-[14px] leading-5 text-neutral900">{message}</Text>
+        <Text className="text-[14px] leading-5 text-graphite">{message}</Text>
       </View>
       {actionLabel && onAction ? (
         <Pressable onPress={onAction} className="ml-auto min-h-[44px] justify-center px-3 rounded-full bg-white border border-borderfaint">

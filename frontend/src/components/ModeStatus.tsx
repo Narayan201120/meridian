@@ -24,7 +24,7 @@ export function ModeStatus({
   return (
     <Card variant="floating">
       <View>
-        <Text className="text-eyebrow text-[12px] font-bold tracking-[1.1px] uppercase mb-2">{tasksRuntime.isApiMode ? "API mode" : "Demo mode"}</Text>
+        <Text className="text-brass text-[12px] font-bold tracking-[1.1px] uppercase mb-2">{tasksRuntime.isApiMode ? "API mode" : "Demo mode"}</Text>
         <Text className="text-ink text-[18px] leading-6 font-bold">
           {tasksRuntime.isApiMode
             ? authSession

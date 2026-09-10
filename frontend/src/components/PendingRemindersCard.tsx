@@ -12,7 +12,7 @@ export function PendingRemindersCard({ pending, onAcked, onError }: { pending: R
   if (pending.length === 0) return null;
   return (
     <View className="bg-cardsurf border border-borderfaint rounded-2xl p-6 md:p-8 shadow-sm gap-4">
-      <Text className="text-eyebrow text-[12px] font-bold tracking-[1.1px] uppercase">Pending reminders</Text>
+      <Text className="text-brass text-[12px] font-bold tracking-[1.1px] uppercase">Pending reminders</Text>
       <Text className="text-bodytext text-[15px] leading-6">
         {pending.length} reminder{pending.length > 1 ? "s" : ""} waiting for delivery. Tap ack when seen.
       </Text>

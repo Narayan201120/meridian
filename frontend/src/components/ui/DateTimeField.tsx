@@ -41,12 +41,12 @@ export function DateTimeField({
 
   return (
     <View className="gap-1.5">
-      <Text className="text-[13px] font-semibold text-neutral900 ml-1">{label}</Text>
+      <Text className="text-[13px] font-semibold text-graphite ml-1">{label}</Text>
       <Pressable
         onPress={open}
         className="bg-cardsurf border border-borderfaint rounded-xl px-4 py-3 min-h-[44px] justify-center"
       >
-        <Text className="text-[15px] text-neutral900">{shown}</Text>
+        <Text className="text-[15px] text-graphite">{shown}</Text>
       </Pressable>
       {step !== null && draft !== null ? (
         <DateTimePicker value={draft} mode={step} is24Hour onChange={onPick} />

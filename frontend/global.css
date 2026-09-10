@@ -14,10 +14,15 @@
   --color-canvas: #fdfbf7;
   --color-primary: #09261e;
   --color-primary-pressed: #0a2f25;
+  --color-graphite: #241f19;
   --color-ink: #1d2a2c;
   --color-slate: #64748b;
   --color-border-faint: #e2e8f0;
   --color-card-surf: #fffdf8;
+  --color-brass: #8a5a12;
+  --color-brass-tint: #e8d9b0;
+  --color-meridian-red: #b23a22;
+  --color-meridian-red-tint: #f3dad0;
   --color-inbox-bg: #e4f0e7;
   --color-scheduled-bg: #f3e2b8;
   --color-duenow-bg: #f7d9bd;
