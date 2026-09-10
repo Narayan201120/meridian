@@ -1,3 +1,26 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/*
+ * Meridian design tokens, mirrored from tailwind.config.js (the single
+ * source of truth — NativeWind compiles theme colors at build time, so
+ * React Native cannot resolve runtime CSS vars; these :root vars exist
+ * for web theming (e.g. a future dark mode) and documentation.
+ * Components must use semantic classes (bg-primary, text-ink, …),
+ * never hardcoded hex.
+ */
+:root {
+  --color-canvas: #fdfbf7;
+  --color-primary: #09261e;
+  --color-primary-pressed: #0a2f25;
+  --color-ink: #1d2a2c;
+  --color-slate: #64748b;
+  --color-border-faint: #e2e8f0;
+  --color-card-surf: #fffdf8;
+  --color-inbox-bg: #e4f0e7;
+  --color-scheduled-bg: #f3e2b8;
+  --color-duenow-bg: #f7d9bd;
+  --color-completed-bg: #d7e1ef;
+  --color-sand-bg: #f6efe1;
+}

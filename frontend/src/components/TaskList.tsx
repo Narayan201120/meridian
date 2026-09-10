@@ -55,14 +55,14 @@ export function TaskList({
       </View>
       {isLoading ? (
         <View className="flex-row items-center gap-2 py-3">
-          <ActivityIndicator size="small" color="#132A24" />
-          <Text className="text-[#415255] text-[14px]">Loading tasks...</Text>
+          <ActivityIndicator size="small" color="#09261E" />
+          <Text className="text-bodytext text-[14px]">Loading tasks...</Text>
         </View>
       ) : null}
       {!isLoading && tasks.length === 0 ? (
-        <View className="bg-[#F6EFE1] rounded-2xl p-4 border border-[#E2D8C3]">
-          <Text className="text-[#1D2A2C] text-[16px] font-bold">No tasks yet</Text>
-          <Text className="text-[#5B615D] text-[14px]">Add a task above to seed the first real workflow in the app.</Text>
+        <View className="bg-sandbg rounded-2xl p-4 border border-sandborder">
+          <Text className="text-ink text-[16px] font-bold">No tasks yet</Text>
+          <Text className="text-sandtext text-[14px]">Add a task above to seed the first real workflow in the app.</Text>
         </View>
       ) : null}
       {!isLoading ? (
@@ -70,13 +70,13 @@ export function TaskList({
           {groups.map((g) => (
             <View key={g.key} className="gap-3">
               <View className="flex-row justify-between items-center">
-                <Text className="text-[#1D2A2C] text-[18px] font-bold">{g.label}</Text>
-                <Text className="text-[#6A6258] text-[12px] font-extrabold uppercase">{g.tasks.length}</Text>
+                <Text className="text-ink text-[18px] font-bold">{g.label}</Text>
+                <Text className="text-sandmuted text-[12px] font-extrabold uppercase">{g.tasks.length}</Text>
               </View>
               {g.tasks.length === 0 ? (
-                <View className="bg-[#F6EFE1] rounded-2xl p-4 border border-[#E2D8C3] gap-1">
-                  <Text className="text-[#1D2A2C] font-bold">{g.emptyTitle}</Text>
-                  <Text className="text-[#5B615D] text-[14px]">{g.emptyBody}</Text>
+                <View className="bg-sandbg rounded-2xl p-4 border border-sandborder gap-1">
+                  <Text className="text-ink font-bold">{g.emptyTitle}</Text>
+                  <Text className="text-sandtext text-[14px]">{g.emptyBody}</Text>
                 </View>
               ) : (
                 <View className="gap-3">{g.tasks.map((t) => render(t))}</View>

@@ -15,11 +15,11 @@ export function InputField({
 } & React.ComponentProps<typeof TextInput>) {
   return (
     <View className={cn("gap-1.5", className)}>
-      {label ? <Text className="text-[13px] font-semibold text-[#1A1A1A] ml-1">{label}</Text> : null}
+      {label ? <Text className="text-[13px] font-semibold text-neutral900 ml-1">{label}</Text> : null}
       <TextInput
         placeholderTextColor="#7D7A70"
         className={cn(
-          "bg-[#FFFDF8] border border-[#E2E8F0] rounded-xl px-4 py-3 text-[15px] text-[#1A1A1A] min-h-[44px] focus:border-[#09261E]",
+          "bg-cardsurf border border-borderfaint rounded-xl px-4 py-3 text-[15px] text-neutral900 min-h-[44px] focus:border-primary",
           error && "border-red-300",
           inputClassName
         )}

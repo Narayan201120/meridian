@@ -20,7 +20,7 @@ export function VoiceCaptureCard() {
       <Button variant="primary" size="md" loading={isVoiceCapturing} onPress={handleVoiceCapture}>
         {isVoiceCapturing ? "Capturing voice..." : "Capture voice → Create task"}
       </Button>
-      {voiceResult ? <Text className="text-[12px] font-semibold text-[#27443E]">{voiceResult}</Text> : null}
+      {voiceResult ? <Text className="text-[12px] font-semibold text-secondarybtntext">{voiceResult}</Text> : null}
       {errorMessage ? <StatusBanner variant="error" message={errorMessage} /> : null}
     </Card>
   );

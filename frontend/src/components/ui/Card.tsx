@@ -12,8 +12,8 @@ export function Card({
   children: React.ReactNode;
 } & React.ComponentProps<typeof View>) {
   const variants: Record<string, string> = {
-    floating: "bg-[#FFFDF8] border border-[#E2E8F0] rounded-2xl p-6 md:p-8 shadow-sm",
-    hero: "bg-[#09261E] rounded-3xl p-6 md:p-8",
+    floating: "bg-cardsurf border border-borderfaint rounded-2xl p-6 md:p-8 shadow-sm",
+    hero: "bg-primary rounded-3xl p-6 md:p-8",
     ghost: "bg-transparent",
   };
   return (

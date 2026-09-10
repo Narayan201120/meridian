@@ -24,19 +24,19 @@ export function ModeStatus({
   return (
     <Card variant="floating">
       <View>
-        <Text className="text-[#B45A36] text-[12px] font-bold tracking-[1.1px] uppercase mb-2">{tasksRuntime.isApiMode ? "API mode" : "Demo mode"}</Text>
-        <Text className="text-[#1D2A2C] text-[18px] leading-6 font-bold">
+        <Text className="text-eyebrow text-[12px] font-bold tracking-[1.1px] uppercase mb-2">{tasksRuntime.isApiMode ? "API mode" : "Demo mode"}</Text>
+        <Text className="text-ink text-[18px] leading-6 font-bold">
           {tasksRuntime.isApiMode
             ? authSession
               ? "Frontend is calling the backend with a Supabase bearer token."
               : "Sign in with your Supabase user to load live tasks."
             : "Frontend is using local demo data until Supabase auth is configured."}
         </Text>
-        <Text className="text-[#4C4A43] text-[14px] leading-5">Base URL: {tasksRuntime.apiBaseUrl}</Text>
+        <Text className="text-captiontext text-[14px] leading-5">Base URL: {tasksRuntime.apiBaseUrl}</Text>
         {tasksRuntime.isApiMode && authSession ? (
           <>
-            <Text className="text-[#4C4A43] text-[14px] leading-5">Signed in as {authSession.user.email ?? authSession.user.id}</Text>
-            <Text className="text-[#4C4A43] text-[14px] leading-5">Calendar: {calendarStatus ?? "checking..."}</Text>
+            <Text className="text-captiontext text-[14px] leading-5">Signed in as {authSession.user.email ?? authSession.user.id}</Text>
+            <Text className="text-captiontext text-[14px] leading-5">Calendar: {calendarStatus ?? "checking..."}</Text>
           </>
         ) : null}
       </View>

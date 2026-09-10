@@ -25,16 +25,16 @@ export function Button({
   const base = "items-center justify-center rounded-full flex-row gap-2 min-h-[44px] min-w-[44px] px-4";
   const sizes = { sm: "h-9 px-3", md: "h-11 px-4" }[size];
   const variants: Record<Variant, string> = {
-    primary: "bg-[#09261E] active:bg-[#0a2f25]",
-    secondary: "bg-[#E8EEE8] active:bg-[#dbe7db]",
-    ghost: "bg-transparent active:bg-black/5 border border-[#E2E8F0]",
-    destructive: "bg-[#F6DED3] active:bg-[#f3c9b8]",
+    primary: "bg-primary active:bg-primarypressed",
+    secondary: "bg-secondarybtn active:bg-secondarybtnpressed",
+    ghost: "bg-transparent active:bg-black/5 border border-borderfaint",
+    destructive: "bg-redbg active:bg-redbgpressed",
   };
   const textVariants: Record<Variant, string> = {
-    primary: "text-[#FFF8EE] font-bold",
-    secondary: "text-[#27443E] font-bold",
-    ghost: "text-[#27443E] font-bold",
-    destructive: "text-[#7F2E14] font-bold",
+    primary: "text-creamtext font-bold",
+    secondary: "text-secondarybtntext font-bold",
+    ghost: "text-secondarybtntext font-bold",
+    destructive: "text-redtext font-bold",
   };
 
   return (
