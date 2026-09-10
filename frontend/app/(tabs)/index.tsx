@@ -1,10 +1,12 @@
 import { useState } from "react";
-import { StatusBar } from "react-native";
+import { StatusBar, Text, View } from "react-native";
+import { Link } from "expo-router";
+import { Card } from "../../src/components/ui/Card";
+import { SectionHeader } from "../../src/components/ui/SectionHeader";
 import { PageShell } from "../../src/components/ui/PageShell";
 import { StatusBanner } from "../../src/components/ui/StatusBanner";
 import { CreateTaskForm } from "../../src/components/CreateTaskForm";
 import { VoiceCaptureCard } from "../../src/components/VoiceCaptureCard";
-import { TaskList } from "../../src/components/TaskList";
 import { Hero } from "../../src/components/Hero";
 import { ModeStatus } from "../../src/components/ModeStatus";
 import { AuthCard } from "../../src/components/AuthCard";
@@ -17,14 +19,32 @@ import { tasksRuntime, type Task } from "../../src/lib/tasks";
 import { useTaskMutations } from "../../src/hooks/useTaskMutations";
 import { useTaskSync } from "../../src/hooks/useTaskSync";
 
-type TaskListFilter = "all" | Task["status"];
+// Home tab — dashboard: hero, mode/auth, capture, banners, pending
+// reminders, and a due-now strip. Full lists live in their own tabs.
+function DueNowStrip({ tasks, isLoading, renderCard }: { tasks: Task[]; isLoading: boolean; renderCard: (t: Task) => React.ReactNode }) {
+  const due = tasks.filter((t) => t.status === "due_now");
+  return (
+    <Card variant="floating" className="gap-4">
+      <SectionHeader eyebrow="NEEDS ATTENTION" title="Due now" body="The most urgent work, inline. Everything else lives in its tab." />
+      {isLoading ? (
+        <Text className="text-bodytext text-[14px]">Loading tasks...</Text>
+      ) : due.length === 0 ? (
+        <View className="bg-sandbg rounded-2xl p-4 border border-sandborder gap-1">
+          <Text className="text-ink font-bold">Nothing is due right now</Text>
+          <Text className="text-sandtext text-[14px]">When scheduled work activates, it shows up here first.</Text>
+        </View>
+      ) : (
+        <View className="gap-3">{due.map((t) => renderCard(t))}</View>
+      )}
+      <Link href="/(tabs)/due_now" className="text-[13px] font-bold text-primary">
+        Open Due now tab →
+      </Link>
+    </Card>
+  );
+}
 
-// Home tab — canonical full task flow, ported verbatim from the former
-// monolithic App.tsx shell so tabs carry zero behavior loss (hero, mode,
-// auth, create, voice, banners, reminders, filtered list with rich editor).
 export default function HomeTab() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [activeTaskFilter, setActiveTaskFilter] = useState<TaskListFilter>("all");
   const { authSession, authEmail, setAuthEmail, authPassword, setAuthPassword, isSigningIn, isSigningOut, handleSignIn, handleSignOut } = useAuth(setErrorMessage);
   const { tasks, setTasks, isLoading, dueNotice, remindersByTask, pendingReminders, dispatchNotice, setDispatchNotice, setPendingReminders, loadTasks, refreshRemindersForTask, replaceTask } = useTaskSync(authSession, setErrorMessage);
   const { calendarStatus, isSyncing, handleSyncCalendar } = useCalendarSync(authSession, setErrorMessage, setDispatchNotice);
@@ -41,8 +61,8 @@ export default function HomeTab() {
     refreshReminders: (id) => void refreshRemindersForTask(id),
     notify: setErrorMessage,
     calendarStatus,
-    activeFilter: activeTaskFilter,
-    onFilterChange: setActiveTaskFilter,
+    activeFilter: "all",
+    onFilterChange: () => {},
   });
 
   async function handleSignOutAndClear() {
@@ -126,9 +146,7 @@ export default function HomeTab() {
 
               <PendingRemindersCard pending={pendingReminders} onAcked={(id) => setPendingReminders((prev) => prev.filter((x) => x.id !== id))} onError={(m) => setErrorMessage(m)} />
 
-              <TaskList
-                activeFilter={activeTaskFilter}
-                setActiveFilter={setActiveTaskFilter}
+              <DueNowStrip
                 tasks={tasks}
                 isLoading={isLoading}
                 renderCard={renderTaskCard}
