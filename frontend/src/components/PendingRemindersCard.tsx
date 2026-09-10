@@ -19,7 +19,9 @@ export function PendingRemindersCard({ pending, onAcked, onError }: { pending: R
       {pending.map((r) => (
         <View key={r.id} className="bg-sandbg rounded-2xl p-3 border border-sandborder gap-1">
           <Text className="text-ink text-[14px] font-bold">{r.type === "scheduled_block" ? "Block" : "Due"} — {formatTaskTime(r.scheduled_for)}</Text>
-          <Text className="text-bodytext text-[13px]">{r.status} · {r.id.slice(0, 8)}</Text>
+          {__DEV__ ? (
+            <Text className="text-bodytext text-[13px]">{r.status} · {r.id.slice(0, 8)}</Text>
+          ) : null}
           <Pressable
             className="rounded-full bg-secondarybtn px-3 py-2 min-h-[44px] justify-center items-center"
             onPress={async () => {

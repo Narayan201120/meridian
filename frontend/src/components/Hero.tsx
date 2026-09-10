@@ -6,7 +6,7 @@ export function Hero() {
     <Card variant="hero">
       <Text className="text-kicker text-[13px] font-bold tracking-[1.4px] uppercase mb-2">Meridian</Text>
       <Text className="text-creamtext text-[32px] leading-[38px] font-extrabold mb-3">Capture a task, then give it somewhere real to go.</Text>
-      <Text className="text-herosub text-[16px] leading-6">This is the first live task flow. In demo mode it runs locally. In API mode it talks to the FastAPI backend with a real Supabase bearer token.</Text>
+      <Text className="text-herosub text-[16px] leading-6">Capture fast, schedule around your calendar, and get reminded at the right moment.</Text>
     </Card>
   );
 }

@@ -32,10 +32,12 @@ export function ModeStatus({
               : "Sign in with your Supabase user to load live tasks."
             : "Frontend is using local demo data until Supabase auth is configured."}
         </Text>
-        <Text className="text-captiontext text-[14px] leading-5">Base URL: {tasksRuntime.apiBaseUrl}</Text>
+        {__DEV__ ? (
+          <Text className="text-captiontext text-[14px] leading-5">Base URL: {tasksRuntime.apiBaseUrl}</Text>
+        ) : null}
         {tasksRuntime.isApiMode && authSession ? (
           <>
-            <Text className="text-captiontext text-[14px] leading-5">Signed in as {authSession.user.email ?? authSession.user.id}</Text>
+            <Text className="text-captiontext text-[14px] leading-5">Signed in as {authSession.user.email ?? "your account"}</Text>
             <Text className="text-captiontext text-[14px] leading-5">Calendar: {calendarStatus ?? "checking..."}</Text>
           </>
         ) : null}
