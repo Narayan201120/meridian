@@ -25,7 +25,7 @@ function DueNowStrip({ tasks, isLoading, renderCard }: { tasks: Task[]; isLoadin
   const due = tasks.filter((t) => t.status === "due_now");
   return (
     <Card variant="floating" className="gap-4">
-      <SectionHeader eyebrow="NEEDS ATTENTION" title="Due now" body="The most urgent work, inline. Everything else lives in its tab." />
+      <SectionHeader eyebrow="Needs attention" title="Due now" body="The most urgent work, inline. Everything else lives in its tab." />
       {isLoading ? (
         <Text className="text-bodytext text-[14px]">Loading tasks...</Text>
       ) : due.length === 0 ? (

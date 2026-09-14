@@ -21,10 +21,11 @@ export function ModeStatus({
   onSync: () => void;
   onSignOut: () => void;
 }) {
+  const calendarDot = calendarStatus === "active" ? "bg-brass" : "bg-slate500";
   return (
-    <Card variant="floating">
+    <Card variant="floating" className="shadow-none">
       <View>
-        <Text className="text-brass text-[12px] font-bold tracking-[1.1px] uppercase mb-2">{tasksRuntime.isApiMode ? "API mode" : "Demo mode"}</Text>
+        <Text className="text-brass text-[13px] font-sans-medium mb-2">{tasksRuntime.isApiMode ? "API mode" : "Demo mode"}</Text>
         <Text className="text-ink text-[18px] leading-6 font-bold">
           {tasksRuntime.isApiMode
             ? authSession
@@ -38,7 +39,10 @@ export function ModeStatus({
         {tasksRuntime.isApiMode && authSession ? (
           <>
             <Text className="text-captiontext text-[14px] leading-5">Signed in as {authSession.user.email ?? "your account"}</Text>
-            <Text className="text-captiontext text-[14px] leading-5">Calendar: {calendarStatus ?? "checking..."}</Text>
+            <View className="flex-row items-center gap-1.5">
+              <View className={`h-1.5 w-1.5 rounded-full ${calendarDot}`} />
+              <Text className="text-captiontext text-[14px] leading-5">Calendar: {calendarStatus ?? "checking..."}</Text>
+            </View>
           </>
         ) : null}
       </View>
