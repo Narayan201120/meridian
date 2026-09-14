@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import "../global.css";
 import { Stack } from "expo-router";
 import { StatusBar } from "react-native";
@@ -9,7 +9,11 @@ import { useFonts as useSpaceGrotesk, SpaceGrotesk_600SemiBold, SpaceGrotesk_700
 import { useFonts as usePublicSans, PublicSans_400Regular, PublicSans_600SemiBold, PublicSans_700Bold } from "@expo-google-fonts/public-sans";
 import { ThemeProvider, useTheme } from "../src/context/ThemeContext";
 
-void SplashScreen.preventAutoHideAsync();
+try {
+  void SplashScreen.preventAutoHideAsync();
+} catch {
+  // Web / environments without a native splash screen.
+}
 
 function ThemedShell() {
   const { scheme } = useTheme();
@@ -24,11 +28,22 @@ function ThemedShell() {
 export default function RootLayout() {
   const [groteskLoaded] = useSpaceGrotesk({ SpaceGrotesk_600SemiBold, SpaceGrotesk_700Bold });
   const [sansLoaded] = usePublicSans({ PublicSans_400Regular, PublicSans_600SemiBold, PublicSans_700Bold });
-  const fontsLoaded = groteskLoaded && sansLoaded;
+  const [timedOut, setTimedOut] = useState(false);
+  // Never block the app on fonts: fall back to system fonts after 3s.
+  const fontsLoaded = (groteskLoaded && sansLoaded) || timedOut;
+
+  useEffect(() => {
+    const timer = setTimeout(() => setTimedOut(true), 3000);
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     if (fontsLoaded) {
-      void SplashScreen.hideAsync();
+      try {
+        void SplashScreen.hideAsync();
+      } catch {
+        // Splash may already be hidden or unsupported.
+      }
     }
   }, [fontsLoaded]);
 
