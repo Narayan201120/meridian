@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { StatusBar, Text, View } from "react-native";
 import { Link } from "expo-router";
+import { Reveal } from "../../src/components/ui/Reveal";
 import { Card } from "../../src/components/ui/Card";
 import { SectionHeader } from "../../src/components/ui/SectionHeader";
 import { PageShell } from "../../src/components/ui/PageShell";
@@ -112,7 +113,9 @@ export default function HomeTab() {
     <>
       <StatusBar barStyle="dark-content" />
       <PageShell>
-          <Hero />
+          <Reveal once="home-hero">
+            <Hero />
+          </Reveal>
           <ModeStatus
             authSession={authSession}
             calendarStatus={calendarStatus}
@@ -146,11 +149,13 @@ export default function HomeTab() {
 
               <PendingRemindersCard pending={pendingReminders} onAcked={(id) => setPendingReminders((prev) => prev.filter((x) => x.id !== id))} onError={(m) => setErrorMessage(m)} />
 
-              <DueNowStrip
-                tasks={tasks}
-                isLoading={isLoading}
-                renderCard={renderTaskCard}
-              />
+              <Reveal once="home-due-now" delay={120}>
+                <DueNowStrip
+                  tasks={tasks}
+                  isLoading={isLoading}
+                  renderCard={renderTaskCard}
+                />
+              </Reveal>
             </>
           )}
 

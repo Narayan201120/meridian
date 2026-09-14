@@ -2,6 +2,7 @@ import { Text, View } from "react-native";
 import { Button } from "./ui/Button";
 import { InputField, TextArea } from "./ui/InputField";
 import { Chip } from "./ui/Chip";
+import { Reveal } from "./ui/Reveal";
 import type { Task } from "../lib/tasks";
 
 export function TaskDetailsEditor({
@@ -30,7 +31,7 @@ export function TaskDetailsEditor({
   onCancel: () => void;
 }) {
   return (
-    <View className="gap-3 pt-1">
+    <Reveal className="gap-3 pt-1">
       <Text className="text-[13px] font-bold text-bodytext">Task details</Text>
       <InputField label="Title" placeholder="Task title" value={title} onChangeText={onTitle} />
       <TextArea label="Notes" placeholder="Notes (optional)" value={notes} onChangeText={onNotes} />
@@ -54,6 +55,6 @@ export function TaskDetailsEditor({
           Cancel
         </Button>
       </View>
-    </View>
+    </Reveal>
   );
 }

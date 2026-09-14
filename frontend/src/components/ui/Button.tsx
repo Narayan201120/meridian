@@ -1,4 +1,5 @@
-import { ActivityIndicator, Pressable, Text } from "react-native";
+import { useRef } from "react";
+import { AccessibilityInfo, ActivityIndicator, Animated, Pressable, Text } from "react-native";
 import { cn } from "../../lib/cn";
 
 type Variant = "primary" | "secondary" | "ghost" | "destructive";
@@ -37,10 +38,27 @@ export function Button({
     destructive: "text-redtext font-sans-bold",
   };
 
+  const scale = useRef(new Animated.Value(1)).current;
+
+  function pressIn() {
+    void AccessibilityInfo.isReduceMotionEnabled().then((reduced) => {
+      if (!reduced) {
+        Animated.timing(scale, { toValue: 0.97, duration: 90, useNativeDriver: true }).start();
+      }
+    });
+  }
+
+  function pressOut() {
+    Animated.timing(scale, { toValue: 1, duration: 140, useNativeDriver: true }).start();
+  }
+
   return (
     <Pressable
       disabled={disabled || loading}
+      onPressIn={pressIn}
+      onPressOut={pressOut}
       className={cn(base, sizes, variants[variant], (disabled || loading) && "opacity-60", className)}
+      style={{ transform: [{ scale }] }}
       {...props}
     >
       {loading ? <ActivityIndicator size="small" color={variant === "primary" ? "#FFF8EE" : "#27443E"} /> : null}

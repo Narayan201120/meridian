@@ -1,6 +1,7 @@
 import { Text, View } from "react-native";
 import { Button } from "./ui/Button";
 import { DateTimeField } from "./ui/DateTimeField";
+import { Reveal } from "./ui/Reveal";
 
 export function ScheduleEditor({
   value,
@@ -16,7 +17,7 @@ export function ScheduleEditor({
   onCancel: () => void;
 }) {
   return (
-    <View className="gap-3 pt-1">
+    <Reveal className="gap-3 pt-1">
       <Text className="text-[13px] font-bold text-bodytext">Schedule time</Text>
       <DateTimeField label="Date and time" value={value} onChange={onValue} />
       <View className="flex-row flex-wrap gap-2">
@@ -27,6 +28,6 @@ export function ScheduleEditor({
           Cancel
         </Button>
       </View>
-    </View>
+    </Reveal>
   );
 }
