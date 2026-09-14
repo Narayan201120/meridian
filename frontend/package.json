@@ -33,6 +33,7 @@
   "devDependencies": {
     "@babel/plugin-proposal-decorators": "^8.0.2",
     "@types/react": "^19.0.0",
+    "sharp": "^0.35.4",
     "typescript": "^5.0.0"
   }
 }
