@@ -41,9 +41,9 @@ export function ListScreen({
             ))}
           </View>
         ) : tasks.length === 0 ? (
-          <View className="bg-sandbg rounded-2xl p-6 border border-sandborder gap-1">
-            <Text className="text-ink text-[16px] font-bold">{emptyTitle}</Text>
-            <Text className="text-sandtext text-[14px] leading-5">{emptyBody}</Text>
+          <View className="bg-sandbg dark:bg-nightcard rounded-2xl p-6 border border-sandborder dark:border-nightborder gap-1">
+            <Text className="text-ink dark:text-nighttext text-[16px] font-bold">{emptyTitle}</Text>
+            <Text className="text-sandtext dark:text-nightmuted text-[14px] leading-5">{emptyBody}</Text>
           </View>
         ) : (
           <View className="gap-3">{tasks.map((t) => renderCard(t))}</View>

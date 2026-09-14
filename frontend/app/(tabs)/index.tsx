@@ -28,11 +28,11 @@ function DueNowStrip({ tasks, isLoading, renderCard }: { tasks: Task[]; isLoadin
     <Card variant="floating" className="gap-4">
       <SectionHeader eyebrow="Needs attention" title="Due now" body="The most urgent work, inline. Everything else lives in its tab." />
       {isLoading ? (
-        <Text className="text-bodytext text-[14px]">Loading tasks...</Text>
+        <Text className="text-bodytext dark:text-nightmuted text-[14px]">Loading tasks...</Text>
       ) : due.length === 0 ? (
-        <View className="bg-sandbg rounded-2xl p-4 border border-sandborder gap-1">
-          <Text className="text-ink font-bold">Nothing is due right now</Text>
-          <Text className="text-sandtext text-[14px]">When scheduled work activates, it shows up here first.</Text>
+        <View className="bg-sandbg dark:bg-nightcard rounded-2xl p-4 border border-sandborder dark:border-nightborder gap-1">
+          <Text className="text-ink dark:text-nighttext font-bold">Nothing is due right now</Text>
+          <Text className="text-sandtext dark:text-nightmuted text-[14px]">When scheduled work activates, it shows up here first.</Text>
         </View>
       ) : (
         <View className="gap-3">{due.map((t) => renderCard(t))}</View>

@@ -28,13 +28,13 @@ export function Button({
   const variants: Record<Variant, string> = {
     primary: "bg-primary active:bg-primarypressed",
     secondary: "bg-secondarybtn active:bg-secondarybtnpressed",
-    ghost: "bg-transparent active:bg-black/5 border border-borderfaint",
+    ghost: "bg-transparent active:bg-black/5 dark:active:bg-white/10 border border-borderfaint dark:border-nightborder",
     destructive: "bg-redbg active:bg-redbgpressed",
   };
   const textVariants: Record<Variant, string> = {
     primary: "text-creamtext font-sans-bold",
     secondary: "text-secondarybtntext font-sans-bold",
-    ghost: "text-secondarybtntext font-sans-bold",
+    ghost: "text-secondarybtntext dark:text-nighttext font-sans-bold",
     destructive: "text-redtext font-sans-bold",
   };
 

@@ -63,7 +63,7 @@ export default function TaskCardEditor({
   return (
     <Card variant="floating" className="p-4 md:p-4 gap-3">
       <View className="flex-row items-center justify-between gap-3">
-        <Text className="flex-1 text-ink text-[18px] leading-6 font-bold">{task.title}</Text>
+        <Text className="flex-1 text-ink dark:text-nighttext text-[18px] leading-6 font-bold">{task.title}</Text>
         <Badge status={task.status} />
       </View>
 
@@ -86,8 +86,8 @@ export default function TaskCardEditor({
       ) : null}
 
       <View className="flex-row justify-between gap-2">
-        <Text className="text-[12px] font-semibold text-sandmuted">Priority: {task.priority}</Text>
-        <Text className="text-[12px] font-semibold text-sandmuted">
+          <Text className="text-[12px] font-semibold text-sandmuted dark:text-nightmuted">Priority: {task.priority}</Text>
+        <Text className="text-[12px] font-semibold text-sandmuted dark:text-nightmuted">
           {task.estimated_duration_minutes ? `${task.estimated_duration_minutes} min` : "No estimate"}
         </Text>
       </View>
@@ -107,7 +107,7 @@ export default function TaskCardEditor({
           ))}
         </View>
       ) : task.status === "scheduled" || task.status === "due_now" ? (
-        <Text className="text-[12px] italic text-sandmuted mt-0.5">No reminder yet — will remind at scheduled time.</Text>
+        <Text className="text-[12px] italic text-sandmuted dark:text-nightmuted mt-0.5">No reminder yet — will remind at scheduled time.</Text>
       ) : null}
 
       {isEditingSchedule ? (
@@ -152,12 +152,12 @@ export default function TaskCardEditor({
       {isShowingSuggestions ? (
         <View className="gap-2.5 mt-1.5 pt-2.5 border-t border-borderfaint">
           {suggestions.length === 0 ? (
-            <Text className="text-[13px] italic text-sandmuted">No suggestions loaded yet. Tap Suggest times again.</Text>
+            <Text className="text-[13px] italic text-sandmuted dark:text-nightmuted">No suggestions loaded yet. Tap Suggest times again.</Text>
           ) : (
             suggestions.map((block) => (
-              <View key={block.suggested_start_at} className="bg-sandbg rounded-2xl p-3 border border-sandborder gap-1.5">
-                <Text className="text-ink text-[14px] font-bold">{formatTaskTime(block.suggested_start_at)}</Text>
-                <Text className="text-bodytext text-[13px]">→ {formatTaskTime(block.suggested_end_at)}</Text>
+              <View key={block.suggested_start_at} className="bg-sandbg dark:bg-nightcard rounded-2xl p-3 border border-sandborder dark:border-nightborder gap-1.5">
+                <Text className="text-ink dark:text-nighttext text-[14px] font-bold">{formatTaskTime(block.suggested_start_at)}</Text>
+                <Text className="text-bodytext dark:text-nightmuted text-[13px]">→ {formatTaskTime(block.suggested_end_at)}</Text>
                 <Button
                   variant="secondary"
                   size="sm"

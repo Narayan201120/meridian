@@ -2,6 +2,7 @@ import { Text, View } from "react-native";
 import { Card } from "./ui/Card";
 import { Button } from "./ui/Button";
 import { tasksRuntime } from "../lib/tasks";
+import { useTheme } from "../context/ThemeContext";
 import type { AuthSession } from "../lib/auth";
 
 export function ModeStatus({
@@ -22,6 +23,7 @@ export function ModeStatus({
   onSignOut: () => void;
 }) {
   const calendarDot = calendarStatus === "active" ? "bg-brass" : "bg-slate500";
+  const { scheme, toggle } = useTheme();
   return (
     <Card variant="floating" className="shadow-none">
       <View>
@@ -48,6 +50,7 @@ export function ModeStatus({
       </View>
       {tasksRuntime.isApiMode && authSession ? (
         <View className="flex-row flex-wrap gap-2">
+          <Button variant="ghost" size="sm" onPress={toggle}>{scheme === "dark" ? "Light mode" : "Dark mode"}</Button>
           <Button variant="secondary" size="sm" onPress={onRefresh}>Refresh</Button>
           {calendarStatus === "active" ? (
             <Button variant="secondary" size="sm" loading={isSyncing} onPress={onSync}>{isSyncing ? "Syncing..." : "Sync calendar"}</Button>
@@ -55,7 +58,10 @@ export function ModeStatus({
           <Button variant="destructive" size="sm" loading={isSigningOut} onPress={onSignOut}>{isSigningOut ? "Signing out..." : "Sign out"}</Button>
         </View>
       ) : (
-        <Button variant="secondary" size="sm" onPress={onRefresh}>{tasksRuntime.isApiMode ? "Retry" : "Refresh"}</Button>
+        <View className="flex-row flex-wrap gap-2">
+          <Button variant="ghost" size="sm" onPress={toggle}>{scheme === "dark" ? "Light mode" : "Dark mode"}</Button>
+          <Button variant="secondary" size="sm" onPress={onRefresh}>{tasksRuntime.isApiMode ? "Retry" : "Refresh"}</Button>
+        </View>
       )}
     </Card>
   );

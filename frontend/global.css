@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* Class-driven dark mode: NativeWind resolves `dark:` against the nearest
+   ancestor carrying the `dark` class (wired in app/_layout.tsx). */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /*
  * Meridian design tokens — single source of truth.
  * NativeWind v4 reads this @theme block at build time; components must
@@ -52,6 +56,13 @@
   --color-successbg: #e5f1de;
   --color-successtext: #355b22;
   --color-successborder: #b8d4aa;
+
+  /* Dark theme: ink-canvas inversion, same brass/red accents. */
+  --color-night: #0c1411;
+  --color-nightcard: #14201b;
+  --color-nightborder: #24352c;
+  --color-nighttext: #ede8dc;
+  --color-nightmuted: #9aa79e;
 
   /* Display: Space Grotesk 700 for hero headlines and big due-time figures. */
   --font-display: "SpaceGrotesk_700Bold", System;

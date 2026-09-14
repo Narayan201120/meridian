@@ -18,10 +18,10 @@ export function StatusBanner({
   className?: string;
 }) {
   const variants: Record<string, string> = {
-    error: "bg-red-50 border-red-200",
-    success: "bg-successbg border-successborder",
-    warning: "bg-amber-50 border-amber-200",
-    info: "bg-slate-50 border-slate-200",
+    error: "bg-red-50 dark:bg-nightcard border-red-200 dark:border-nightborder",
+    success: "bg-successbg dark:bg-nightcard border-successborder dark:border-nightborder",
+    warning: "bg-amber-50 dark:bg-nightcard border-amber-200 dark:border-nightborder",
+    info: "bg-slate-50 dark:bg-nightcard border-slate-200 dark:border-nightborder",
   };
   const titleColor =
     variant === "error" ? "text-redtext" : variant === "success" ? "text-successtext" : variant === "warning" ? "text-ambertext" : "text-slate500";
@@ -35,7 +35,7 @@ export function StatusBanner({
       <Icon size={16} color={iconColor} style={{ marginTop: 2 }} />
       <View className="flex-1 gap-1">
         {title ? <Text className={cn("text-[12px] font-extrabold uppercase tracking-wide", titleColor)}>{title}</Text> : null}
-        <Text className="text-[14px] leading-5 text-graphite">{message}</Text>
+        <Text className="text-[14px] leading-5 text-graphite dark:text-nighttext">{message}</Text>
       </View>
       {actionLabel && onAction ? (
         <Pressable onPress={onAction} className="ml-auto min-h-[44px] justify-center px-3 rounded-full bg-white border border-borderfaint">
