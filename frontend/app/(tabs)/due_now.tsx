@@ -6,7 +6,7 @@ export default function DueNowTab() {
   const { tasks, isLoading } = useTasksContext();
   return (
     <ListScreen
-      eyebrow="NEEDS ATTENTION"
+      eyebrow="Needs attention"
       title="Due now"
       body="Activated work that needs a decision right now."
       emptyTitle="Nothing is due right now"

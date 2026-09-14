@@ -6,7 +6,7 @@ export default function CompletedTab() {
   const { tasks, isLoading } = useTasksContext();
   return (
     <ListScreen
-      eyebrow="DONE"
+      eyebrow="Done"
       title="Completed"
       body="Finished work, kept visible until archived."
       emptyTitle="Nothing completed yet"

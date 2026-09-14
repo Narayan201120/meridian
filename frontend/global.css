@@ -57,8 +57,10 @@
   --font-display: "SpaceGrotesk_700Bold", System;
   /* Section and card titles: Space Grotesk 600. */
   --font-heading: "SpaceGrotesk_600SemiBold", System;
-  /* Body, labels, buttons, badges: Public Sans. */
+  /* Body, labels, buttons, badges: Public Sans.
+     Suffixed names avoid colliding with Tailwind's font-weight
+     utilities (font-bold, font-semibold, …). */
   --font-sans: "PublicSans_400Regular", System;
-  --font-semibold: "PublicSans_600SemiBold", System;
-  --font-bold: "PublicSans_700Bold", System;
+  --font-sans-medium: "PublicSans_600SemiBold", System;
+  --font-sans-bold: "PublicSans_700Bold", System;
 }

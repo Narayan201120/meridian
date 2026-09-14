@@ -6,7 +6,7 @@ export default function ScheduledTab() {
   const { tasks, isLoading } = useTasksContext();
   return (
     <ListScreen
-      eyebrow="PLANNED"
+      eyebrow="Planned"
       title="Scheduled"
       body="Calendar-aware work, ordered by activation time."
       emptyTitle="Nothing scheduled"

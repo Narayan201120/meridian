@@ -6,7 +6,7 @@ export default function InboxTab() {
   const { tasks, isLoading } = useTasksContext();
   return (
     <ListScreen
-      eyebrow="INBOX"
+      eyebrow="Inbox"
       title="Inbox"
       body="New and reopened work lands here first."
       emptyTitle="Inbox is clear"

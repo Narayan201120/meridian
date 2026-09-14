@@ -31,7 +31,7 @@ export function CreateTaskForm() {
 
   return (
     <Card variant="floating" className="gap-4">
-      <SectionHeader eyebrow="CREATE TASK" title="Add something real" body="Keep this first flow narrow: title, optional notes, then decide whether it lands in inbox or scheduled work with a real activation time." />
+      <SectionHeader eyebrow="Create task" title="Add something real" body="Keep this first flow narrow: title, optional notes, then decide whether it lands in inbox or scheduled work with a real activation time." />
       <View className="flex-row flex-wrap gap-2">
         {[
           { key: "inbox", label: "Send to inbox" },

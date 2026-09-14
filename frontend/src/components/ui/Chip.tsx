@@ -19,14 +19,14 @@ export function Chip({
       onPress={onPress}
       className={cn(
         "flex-row items-center gap-2 rounded-full px-3 py-2 border min-h-[44px]",
-        active ? "bg-primary border-primary" : "bg-chipbg border-chipborder",
+        active ? "bg-primary border-primary" : "bg-transparent border-borderfaint",
         className
       )}
     >
-      <Text className={cn("text-[13px] font-bold", active ? "text-white" : "text-chiptext")}>{label}</Text>
+      <Text className={cn("text-[13px] font-sans-bold", active ? "text-white" : "text-chiptext")}>{label}</Text>
       {count !== undefined ? (
         <View className={cn("min-w-[20px] rounded-full px-1.5 py-0.5 items-center", active ? "bg-chipcountbg" : "bg-white")}>
-          <Text className={cn("text-[11px] font-extrabold", active ? "text-white" : "text-sandtext")}>{count}</Text>
+          <Text className={cn("text-[11px] font-sans-bold tabular-nums", active ? "text-white" : "text-sandtext")}>{count}</Text>
         </View>
       ) : null}
     </Pressable>

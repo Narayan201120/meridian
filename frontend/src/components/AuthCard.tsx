@@ -20,7 +20,7 @@ export function AuthCard({
 }) {
   return (
     <Card variant="floating" className="gap-4">
-      <SectionHeader eyebrow="SIGN IN" title="Use your Supabase user" body="Sign in with the local auth user you created in Supabase Studio so the task flow uses the same bearer-token auth path the backend now enforces." />
+      <SectionHeader eyebrow="Sign in" title="Use your Supabase user" body="Sign in with the local auth user you created in Supabase Studio so the task flow uses the same bearer-token auth path the backend now enforces." />
       <InputField label="Email" placeholder="you@example.com" value={authEmail} onChangeText={setAuthEmail} autoCapitalize="none" keyboardType="email-address" textContentType="emailAddress" />
       <InputField label="Password" placeholder="••••••••" value={authPassword} onChangeText={setAuthPassword} secureTextEntry textContentType="password" />
       <Button variant="primary" size="md" loading={isSigningIn} onPress={onSignIn}>{isSigningIn ? "Signing in..." : "Sign in"}</Button>

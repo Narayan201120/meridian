@@ -10,7 +10,7 @@ export function VoiceCaptureCard() {
   const { voiceTranscript, setVoiceTranscript, isVoiceCapturing, voiceResult, errorMessage, handleVoiceCapture } = useVoiceCapture();
   return (
     <Card variant="floating" className="gap-4">
-      <SectionHeader eyebrow="VOICE CAPTURE" title="Speak it, keep it" body="Paste a transcript (future: mic) — it will be structured and saved as a voice task. Never auto-writes calendar." />
+      <SectionHeader eyebrow="Voice capture" title="Speak it, keep it" body="Paste a transcript (future: mic) — it will be structured and saved as a voice task. Never auto-writes calendar." />
       <TextArea
         label="Voice transcript"
         placeholder="Voice transcript (e.g., Urgent: record demo video, needs 30 minutes)"

@@ -47,7 +47,7 @@ export function TaskList({
 
   return (
     <Card variant="floating" className="gap-4">
-      <SectionHeader eyebrow="TASK LIST" title="Shape the work" body="Meridian needs more than a raw list. Filter by task state, then work from a clearer execution view." />
+      <SectionHeader eyebrow="Task list" title="Shape the work" body="Meridian needs more than a raw list. Filter by task state, then work from a clearer execution view." />
       <View className="flex-row flex-wrap gap-2">
         {filters.map((f) => (
           <Chip key={f.key} label={f.label} count={getCount(tasks, f.key)} active={activeFilter === f.key} onPress={() => setActiveFilter(f.key)} />

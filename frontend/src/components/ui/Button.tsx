@@ -22,7 +22,7 @@ export function Button({
   textClassName?: string;
   children: string;
 } & React.ComponentProps<typeof Pressable>) {
-  const base = "items-center justify-center rounded-full flex-row gap-2 min-h-[44px] min-w-[44px] px-4";
+  const base = "items-center justify-center rounded-xl flex-row gap-2 min-h-[44px] min-w-[44px] px-4";
   const sizes = { sm: "h-9 px-3", md: "h-11 px-4" }[size];
   const variants: Record<Variant, string> = {
     primary: "bg-primary active:bg-primarypressed",
@@ -31,10 +31,10 @@ export function Button({
     destructive: "bg-redbg active:bg-redbgpressed",
   };
   const textVariants: Record<Variant, string> = {
-    primary: "text-creamtext font-bold",
-    secondary: "text-secondarybtntext font-bold",
-    ghost: "text-secondarybtntext font-bold",
-    destructive: "text-redtext font-bold",
+    primary: "text-creamtext font-sans-bold",
+    secondary: "text-secondarybtntext font-sans-bold",
+    ghost: "text-secondarybtntext font-sans-bold",
+    destructive: "text-redtext font-sans-bold",
   };
 
   return (
@@ -44,7 +44,7 @@ export function Button({
       {...props}
     >
       {loading ? <ActivityIndicator size="small" color={variant === "primary" ? "#FFF8EE" : "#27443E"} /> : null}
-      <Text className={cn("text-[13px] font-bold text-center", textVariants[variant], textClassName)}>{children}</Text>
+      <Text className={cn("text-[13px] text-center", textVariants[variant], textClassName)}>{children}</Text>
     </Pressable>
   );
 }
