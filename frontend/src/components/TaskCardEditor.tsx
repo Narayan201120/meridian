@@ -1,6 +1,7 @@
 import { Text, View } from "react-native";
 import { Badge } from "./ui/Badge";
 import { Button } from "./ui/Button";
+import { Card } from "./ui/Card";
 import { TaskDetailsEditor } from "./TaskDetailsEditor";
 import { ScheduleEditor } from "./ScheduleEditor";
 import { formatTaskTime } from "../lib/datetime";
@@ -60,7 +61,7 @@ export default function TaskCardEditor({
   const busy = (action: string) => isBusy && activeAction === action;
 
   return (
-    <View className="rounded-2xl bg-cardsurf border border-borderfaint p-4 gap-3">
+    <Card variant="floating" className="p-4 md:p-4 gap-3">
       <View className="flex-row items-center justify-between gap-3">
         <Text className="flex-1 text-ink text-[18px] leading-6 font-bold">{task.title}</Text>
         <Badge status={task.status} />
@@ -173,6 +174,6 @@ export default function TaskCardEditor({
           )}
         </View>
       ) : null}
-    </View>
+    </Card>
   );
 }
