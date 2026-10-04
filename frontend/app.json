@@ -30,7 +30,9 @@
       "nativewind": true
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      "@react-native-community/datetimepicker",
+      "expo-secure-store"
     ]
   }
 }

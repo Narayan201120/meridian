@@ -16,6 +16,8 @@ frontend/expo*.log
 .playwright-mcp/
 .serena/
 verify-*.png
+frontend/test-results/
+frontend/playwright-report/
 
 # OS/editor noise
 .DS_Store
