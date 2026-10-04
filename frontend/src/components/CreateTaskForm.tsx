@@ -7,8 +7,10 @@ import { SectionHeader } from "./ui/SectionHeader";
 import { StatusBanner } from "./ui/StatusBanner";
 import { DateTimeField } from "./ui/DateTimeField";
 import { useTaskCreate } from "../hooks/useTaskCreate";
+import { useTasksContext } from "../context/TasksContext";
 
 export function CreateTaskForm() {
+  const { refresh } = useTasksContext();
   const {
     title,
     setTitle,
@@ -27,7 +29,7 @@ export function CreateTaskForm() {
     errorMessage,
     handleStructureCapture,
     handleCreateTask,
-  } = useTaskCreate();
+  } = useTaskCreate({ onTasksChanged: refresh });
 
   return (
     <Card variant="floating" className="gap-4">

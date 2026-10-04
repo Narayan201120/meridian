@@ -1,7 +1,12 @@
 import { useState } from "react";
 import { captureVoice } from "../lib/tasks";
 
-export function useVoiceCapture() {
+export type UseVoiceCaptureDeps = {
+  /** Same reason as useTaskCreate: a created task is invisible until the list re-reads. */
+  onTasksChanged: () => void | Promise<void>;
+};
+
+export function useVoiceCapture(deps: UseVoiceCaptureDeps) {
   const [voiceTranscript, setVoiceTranscript] = useState("");
   const [isVoiceCapturing, setIsVoiceCapturing] = useState(false);
   const [voiceResult, setVoiceResult] = useState<string | null>(null);
@@ -19,6 +24,7 @@ export function useVoiceCapture() {
       const res = await captureVoice(voiceTranscript, true);
       setVoiceResult(`Captured "${res.suggestion.title}"` + (res.task_id ? ` → task ${res.task_id.slice(0, 8)}` : ""));
       setVoiceTranscript("");
+      await deps.onTasksChanged();
     } catch (e: any) {
       setErrorMessage(e?.message ?? String(e));
     } finally {

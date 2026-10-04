@@ -1,6 +1,15 @@
 import { useState } from "react";
 import { createTask, structureCapture, type Task } from "../lib/tasks";
 
+export type UseTaskCreateDeps = {
+  /**
+   * Called after a task is created so the task list picks it up. Without this
+   * the new task only appears on a full reload: createTask mutates the demo
+   * store, but nothing re-reads it, and demo mode has no polling.
+   */
+  onTasksChanged: () => void | Promise<void>;
+};
+
 function parseDateTimeInputValue(value: string) {
   const normalized = value.trim().replace(" ", "T");
   if (!normalized) return null;
@@ -9,7 +18,7 @@ function parseDateTimeInputValue(value: string) {
   return parsed.toISOString();
 }
 
-export function useTaskCreate() {
+export function useTaskCreate(deps: UseTaskCreateDeps) {
   const [title, setTitle] = useState("");
   const [notes, setNotes] = useState("");
   const [draftPriority, setDraftPriority] = useState<Task["priority"]>("medium");
@@ -72,6 +81,7 @@ export function useTaskCreate() {
       setScheduledForInput("");
       setDraftStatus("inbox");
       setErrorMessage(null);
+      await deps.onTasksChanged();
     } catch (e: any) {
       setErrorMessage(e?.message ?? String(e));
     } finally {

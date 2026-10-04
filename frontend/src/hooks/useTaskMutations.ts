@@ -221,7 +221,13 @@ export function useTaskMutations(deps: UseTaskMutationsDeps) {
     notify(null);
     setSuggestTaskId(task.id);
     try {
-      const result = await suggestBlocks(task.id, { max_results: 3 });
+      // Pass the task's own duration so demo mode matches the server, which
+      // falls back to the stored value when this is null. Leaving it out made
+      // the demo stub invent 30-minute blocks for a 45-minute task.
+      const result = await suggestBlocks(task.id, {
+        max_results: 3,
+        duration_minutes: task.estimated_duration_minutes ?? undefined,
+      });
       setSuggestionsByTask((prev) => ({ ...prev, [task.id]: result.suggestions }));
       if (result.suggestions.length === 0) {
         notify("No free calendar gaps found in the next 7 days for this duration.");

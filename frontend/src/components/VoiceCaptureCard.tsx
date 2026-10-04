@@ -5,9 +5,12 @@ import { Button } from "./ui/Button";
 import { SectionHeader } from "./ui/SectionHeader";
 import { StatusBanner } from "./ui/StatusBanner";
 import { useVoiceCapture } from "../hooks/useVoiceCapture";
+import { useTasksContext } from "../context/TasksContext";
 
 export function VoiceCaptureCard() {
-  const { voiceTranscript, setVoiceTranscript, isVoiceCapturing, voiceResult, errorMessage, handleVoiceCapture } = useVoiceCapture();
+  const { refresh } = useTasksContext();
+  const { voiceTranscript, setVoiceTranscript, isVoiceCapturing, voiceResult, errorMessage, handleVoiceCapture } =
+    useVoiceCapture({ onTasksChanged: refresh });
   return (
     <Card variant="floating" className="gap-4">
       <SectionHeader eyebrow="Voice capture" title="Speak it, keep it" body="Paste a transcript (future: mic) — it will be structured and saved as a voice task. Never auto-writes calendar." />
