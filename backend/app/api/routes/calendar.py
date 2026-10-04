@@ -1,7 +1,8 @@
+from datetime import datetime, timezone
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,8 +38,28 @@ async def google_callback(
 
 @router.get("/google/status")
 async def google_status(current_user_id: Annotated[UUID, Depends(get_current_user_id)], session: Annotated[AsyncSession, Depends(get_db_session)]) -> dict[str, str]:
-    connection = await GoogleCalendarService(session).get_connection(current_user_id)
-    return {"status": connection.status if connection else "not_connected"}
+    """Report whether the calendar is actually usable, not just marked active.
+
+    The stored status column can read `active` while the access token can no
+    longer be decrypted, for example after the Fernet key is rotated. Reporting
+    that as connected offers a Sync button which then fails, so verify the token
+    is readable and downgrade to `error` when it is not.
+    """
+    service = GoogleCalendarService(session)
+    connection = await service.get_connection(current_user_id)
+    if connection is None:
+        return {"status": "not_connected"}
+    if connection.status != "active":
+        return {"status": connection.status}
+    try:
+        service._decrypt(connection.access_token_ciphertext)
+    except HTTPException:
+        connection.status = "error"
+        connection.last_error_message = "Stored calendar token could not be decrypted. Reconnect Google Calendar."
+        connection.last_error_at = datetime.now(timezone.utc)
+        await session.commit()
+        return {"status": "error"}
+    return {"status": "active"}
 
 
 @router.post("/google/freebusy", response_model=FreeBusyResponse, summary="Query Google free/busy")

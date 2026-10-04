@@ -15,6 +15,68 @@ async def test_calendar_status_not_connected(client):
 
 
 @pytest.mark.asyncio
+async def test_calendar_status_reports_active_when_token_decrypts(client, db_session):
+    """A connection whose token is readable must report active."""
+    from uuid import UUID
+
+    from app.core.config import settings
+    from app.models import CalendarConnection
+
+    cipher = settings.get_fernet()
+    created = await client.post("/api/v1/tasks", json={"title": "Status owner"})
+    user_id = UUID(created.json()["user_id"])
+    conn = CalendarConnection(
+        user_id=user_id,
+        provider="google",
+        provider_account_id="primary",
+        status="active",
+        access_token_ciphertext=cipher.encrypt(b"a-readable-token").decode(),
+    )
+    db_session.add(conn)
+    await db_session.commit()
+
+    resp = await client.get("/api/v1/calendar/google/status")
+    assert resp.json()["status"] == "active"
+
+
+@pytest.mark.asyncio
+async def test_calendar_status_downgrades_when_token_undecryptable(client, db_session):
+    """A stale Fernet key must not leave the UI showing a working connection.
+
+    Reported as active, the app offers Sync calendar and then fails on first use
+    with "Failed to decrypt calendar token." The status has to reflect reality.
+    """
+    from uuid import UUID
+
+    from app.models import CalendarConnection
+
+    created = await client.post("/api/v1/tasks", json={"title": "Broken owner"})
+    user_id = UUID(created.json()["user_id"])
+    conn = CalendarConnection(
+        user_id=user_id,
+        provider="google",
+        provider_account_id="primary",
+        status="active",
+        # Encrypted under a different key, so decryption fails.
+        access_token_ciphertext="bm90LWRlY3J5cHRhYmxlLXdpdGgtdGhpcy1rZXk=",
+    )
+    db_session.add(conn)
+    await db_session.commit()
+
+    resp = await client.get("/api/v1/calendar/google/status")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "error", "undecryptable token must not report as connected"
+
+    # And the downgrade must persist, not repeat on every poll.
+    again = await client.get("/api/v1/calendar/google/status")
+    assert again.json()["status"] == "error"
+
+    await db_session.refresh(conn)
+    assert conn.status == "error"
+    assert conn.last_error_message
+
+
+@pytest.mark.asyncio
 async def test_calendar_authorize_requires_auth(unauthenticated_client):
     resp = await unauthenticated_client.get("/api/v1/calendar/google/authorize")
     assert resp.status_code in (401, 403)
@@ -407,13 +469,43 @@ async def test_list_reminders_requires_auth(unauthenticated_client):
 
 
 @pytest.mark.asyncio
-async def test_dispatch_and_ack_reminder(client, db_session):
+async def test_dispatch_and_ack_reminder(client, db_session, auth_user_id, monkeypatch):
     from datetime import datetime, timedelta, timezone
     from uuid import UUID
 
     from sqlalchemy import select
 
-    from app.models import NotificationDelivery, Reminder
+    from app.models import Device, NotificationDelivery, Reminder
+
+    # Dispatch checks VAPID config before building a transport, so make the
+    # server look configured here.
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "web_push_public_key", "test-public-key")
+    monkeypatch.setattr(settings, "web_push_private_key", "test-private-key")
+    monkeypatch.setattr(settings, "web_push_subject", "mailto:test@example.com")
+
+    # A registered device and a stand-in transport are both required now:
+    # dispatch marks a reminder sent only once a device actually accepted it.
+    device = Device(
+        user_id=UUID(auth_user_id),
+        platform="web",
+        device_name="Test browser",
+        push_token="https://push.example/dispatch",
+        last_seen_at=datetime.now(timezone.utc),
+    )
+    db_session.add(device)
+    await db_session.commit()
+
+    class _Transport:
+        def __init__(self) -> None:
+            self.sent: list[str] = []
+
+        async def send(self, *, subscription: str, payload: dict) -> str:
+            self.sent.append(subscription)
+            return "msg-dispatch"
+
+    transport = _Transport()
 
     # create task scheduled 1 hour ahead
     future = datetime.now(timezone.utc) + timedelta(hours=1)
@@ -428,11 +520,13 @@ async def test_dispatch_and_ack_reminder(client, db_session):
     r.scheduled_for = datetime.now(timezone.utc) - timedelta(minutes=1)
     await db_session.commit()
     # dispatch
-    disp = await client.post("/api/v1/tasks/reminders/dispatch")
+    with patch("app.services.scheduling.get_push_transport", return_value=transport):
+        disp = await client.post("/api/v1/tasks/reminders/dispatch")
     assert disp.status_code == 200, disp.text
     body = disp.json()
     assert body["dispatched"] == 1
     assert len(body["reminders"]) == 1
+    assert transport.sent == ["https://push.example/dispatch"], "no push actually went out"
     # reminder should now be sent
     await db_session.refresh(r)
     assert r.status == "sent"
@@ -591,3 +685,5 @@ class TestReturnToGuard:
     def test_trailing_slash_in_config_still_matches(self, monkeypatch):
         monkeypatch.setattr(settings, "cors_origins", ["http://localhost:8081/"])
         assert GoogleCalendarService._safe_return_to("http://localhost:8081/x") == "http://localhost:8081/x"
+
+
