@@ -132,6 +132,10 @@ class TaskService:
         task = await self.get_task(user_id=user_id, task_id=task_id)
         task.deleted_at = self._utcnow()
 
+        # Soft delete still has to silence reminders, or a deleted task keeps
+        # notifying. Same path as unscheduling.
+        await self._sync_due_date_reminder(task)
+
         await self._write_mutation_log(
             user_id=user_id,
             task_id=task_id,
@@ -246,7 +250,21 @@ class TaskService:
         if not should_have:
             for r in existing_list:
                 r.status = ReminderStatus.CANCELED
-            if existing_list:
+            # Block reminders belong to a confirmed calendar block. When the task
+            # leaves scheduled/due_now (unscheduled, completed, deleted) they must
+            # go too, otherwise a reminder fires for work back in the inbox.
+            block_reminders = await self.session.scalars(
+                select(Reminder).where(
+                    Reminder.user_id == task.user_id,
+                    Reminder.task_id == task.id,
+                    Reminder.type == ReminderType.SCHEDULED_BLOCK,
+                    Reminder.status.in_([ReminderStatus.PENDING, ReminderStatus.SCHEDULED]),
+                )
+            )
+            block_list = list(block_reminders.all())
+            for r in block_list:
+                r.status = ReminderStatus.CANCELED
+            if existing_list or block_list:
                 await self.session.commit()
             return
         # Ensure due_at is aware

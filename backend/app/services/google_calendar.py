@@ -106,6 +106,29 @@ class GoogleCalendarService:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Google Calendar event creation failed: {response.text[:200]}")
         return response.json()
 
+    async def delete_calendar_event(self, user_id: UUID, external_event_id: str) -> None:
+        """Withdraw a previously created event.
+
+        Google answers 404/410 when the event is already gone, which is the
+        state the caller wanted, so treat those as success. Any other failure
+        propagates so the caller can record it instead of silently forgetting an
+        event we could not remove.
+        """
+        connection = await self.get_connection(user_id)
+        if not connection or connection.status != "active":
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No active calendar connection.")
+        access_token = await self.get_valid_access_token(connection)
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.delete(
+                f"{GOOGLE_CALENDAR_EVENTS_URL}/{external_event_id}",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+        if response.is_error and response.status_code not in (404, 410):
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Google Calendar event deletion failed: {response.text[:200]}",
+            )
+
     async def find_matching_event(self, user_id: UUID, summary: str, start_at: datetime, end_at: datetime) -> dict | None:
         # Reconcile ambiguous failures: Google may have created the event while the
         # response was lost. events.insert has no idempotency key, so match by title + start.

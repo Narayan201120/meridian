@@ -205,6 +205,17 @@ async def confirm_block(
     return TaskCalendarBlockRead.model_validate(block)
 
 
+@router.post("/{task_id}/blocks/{block_id}/cancel", response_model=TaskCalendarBlockRead, summary="Cancel a block and withdraw the calendar event it created")
+async def cancel_block(
+    task_id: UUID,
+    block_id: UUID,
+    current_user_id: Annotated[UUID, Depends(get_current_user_id)],
+    scheduling_service: Annotated[SchedulingService, Depends(get_scheduling_service)],
+) -> TaskCalendarBlockRead:
+    block = await scheduling_service.cancel_block(user_id=current_user_id, task_id=task_id, block_id=block_id)
+    return TaskCalendarBlockRead.model_validate(block)
+
+
 @router.get("/{task_id}/reminders", response_model=list[ReminderRead], summary="List reminders for a task")
 async def list_reminders(
     task_id: UUID,

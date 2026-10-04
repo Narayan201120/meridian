@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.models.calendar_connection import CalendarEvent, NotificationDelivery, NotificationDeliveryStatus, Reminder, ReminderStatus, ReminderType, TaskCalendarBlock, TaskCalendarBlockStatus
+from app.models.task import Task
 from app.models.task import TaskStatus
 from app.repositories.tasks import TaskRepository
 from app.schemas.calendar import SuggestedBlock
@@ -466,6 +467,75 @@ class SchedulingService:
         # Create scheduled_block reminder + ensure due_date reminder via task sync
         await self._ensure_block_reminder(task, block)
         return block
+
+    async def cancel_block(self, *, user_id: UUID, task_id: UUID, block_id: UUID) -> TaskCalendarBlock:
+        """Cancel a block and withdraw the Google event it created.
+
+        Idempotent: cancelling an already-canceled block returns it untouched
+        rather than issuing a second delete.
+        """
+        block = await self.session.scalar(
+            select(TaskCalendarBlock).where(
+                TaskCalendarBlock.id == block_id,
+                TaskCalendarBlock.user_id == user_id,
+                TaskCalendarBlock.task_id == task_id,
+            )
+        )
+        if block is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Calendar block not found.")
+        if block.status == TaskCalendarBlockStatus.CANCELED:
+            return block
+
+        external_id = self._external_event_id(block)
+        delete_error: str | None = None
+        if external_id is not None:
+            try:
+                await self.calendar.delete_calendar_event(user_id, external_id)
+            except HTTPException as exc:
+                # The user's intent to cancel is honoured locally regardless. If
+                # Google refused, keep the event link and record why, so the
+                # orphan can be retried instead of being forgotten.
+                delete_error = str(exc.detail)[:500]
+
+        if delete_error is None:
+            block.calendar_event_id = None
+        block.status = TaskCalendarBlockStatus.CANCELED
+        block.last_error_message = delete_error
+        await self.session.commit()
+        await self.session.refresh(block)
+
+        # Cancel this block's reminder plus the task-level due_date reminder.
+        task = await self.session.get(Task, task_id)
+        if task is not None:
+            await self._cancel_reminders_for_task(task)
+        return block
+
+    async def _cancel_reminders_for_task(self, task: Task) -> None:
+        """Cancel every live reminder attached to a task.
+
+        Both types matter. Leaving a scheduled_block reminder pending would fire a
+        notification for work the user just moved back to their inbox.
+        """
+        rows = await self.session.scalars(
+            select(Reminder).where(
+                Reminder.user_id == task.user_id,
+                Reminder.task_id == task.id,
+                Reminder.type.in_([ReminderType.DUE_DATE, ReminderType.SCHEDULED_BLOCK]),
+                Reminder.status.in_([ReminderStatus.PENDING, ReminderStatus.SCHEDULED]),
+            )
+        )
+        for reminder in rows.all():
+            reminder.status = ReminderStatus.CANCELED
+        await self.session.commit()
+
+    @staticmethod
+    def _external_event_id(block: TaskCalendarBlock) -> str | None:
+        reason = block.suggestion_reason or {}
+        if isinstance(reason, dict):
+            candidate = reason.get("external_event_id")
+            if isinstance(candidate, str) and candidate:
+                return candidate
+        return None
 
     async def _ensure_block_reminder(self, task, block: TaskCalendarBlock) -> None:
         # Cancel existing scheduled_block pending for this block

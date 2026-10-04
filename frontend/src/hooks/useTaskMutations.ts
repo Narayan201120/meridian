@@ -1,15 +1,18 @@
 import { useState } from "react";
 import {
+  cancelTaskCalendarBlock,
   confirmTaskCalendarBlock,
   createTaskCalendarBlock,
   deleteTask,
   describeTaskError,
+  listTaskCalendarBlocks,
   listTasks,
   suggestBlocks,
   tasksRuntime,
   updateTask,
   type SuggestedBlock,
   type Task,
+  type TaskCalendarBlock,
 } from "../lib/tasks";
 
 export type TaskAction = "complete" | "reopen" | "delete" | "schedule" | "unschedule" | "edit" | "suggest" | null;
@@ -194,6 +197,10 @@ export function useTaskMutations(deps: UseTaskMutationsDeps) {
     setActiveTaskAction("unschedule");
     notify(null);
     try {
+      // Withdraw the calendar event before moving the task back, so the two
+      // cannot diverge if the block cancel fails. A stale event on the real
+      // calendar is worse than a task that stays scheduled.
+      await cancelConfirmedBlocks(task);
       const nextTask = await updateTask(task.id, { status: "inbox", due_at: null });
       replaceTask(nextTask);
       if (activeFilter !== "all" && activeFilter !== nextTask.status) {
@@ -201,12 +208,43 @@ export function useTaskMutations(deps: UseTaskMutationsDeps) {
       }
       setScheduleEditorTaskId(null);
       setScheduleEditorValue("");
+      setSuggestTaskId(null);
+      setSuggestionsByTask((prev) => {
+        const { [task.id]: _removed, ...rest } = prev;
+        return rest;
+      });
       refreshReminders(task.id);
     } catch (error) {
       notify(describeTaskError(error));
     } finally {
       setActiveTaskId(null);
       setActiveTaskAction(null);
+    }
+  }
+
+  /**
+   * Cancel every block that actually reached Google.
+   *
+   * Only confirmed blocks own a calendar event. If Google refuses, the error is
+   * surfaced and the block is left confirmed on purpose: the task stays scheduled
+   * so the event and the task still agree, and the user can retry.
+   */
+  async function cancelConfirmedBlocks(task: Task) {
+    if (!tasksRuntime.isApiMode) {
+      return;
+    }
+    let blocks: TaskCalendarBlock[];
+    try {
+      blocks = await listTaskCalendarBlocks(task.id);
+    } catch {
+      // Listing is best effort; unscheduling the task still matters more.
+      return;
+    }
+    for (const block of blocks) {
+      if (block.status !== "confirmed") {
+        continue;
+      }
+      await cancelTaskCalendarBlock(task.id, block.id);
     }
   }
 

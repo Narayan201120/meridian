@@ -663,6 +663,58 @@ export async function confirmTaskCalendarBlock(taskId: string, blockId: string):
   return (await response.json()) as TaskCalendarBlock;
 }
 
+export async function listTaskCalendarBlocks(taskId: string): Promise<TaskCalendarBlock[]> {
+  if (!tasksRuntime.isApiMode) {
+    return [];
+  }
+
+  const response = await fetch(`${tasksRuntime.apiBaseUrl}/tasks/${taskId}/blocks`, {
+    headers: buildApiHeaders(),
+  });
+
+  if (!response.ok) {
+    const detail = await readErrorDetail(response);
+    throw new Error(detail || `Failed to list calendar blocks (${response.status})`);
+  }
+
+  return (await response.json()) as TaskCalendarBlock[];
+}
+
+/** Cancel a block so the Google event it created is withdrawn, not orphaned. */
+export async function cancelTaskCalendarBlock(taskId: string, blockId: string): Promise<TaskCalendarBlock> {
+  if (!tasksRuntime.isApiMode) {
+    return {
+      id: blockId,
+      user_id: "demo-user",
+      task_id: taskId,
+      calendar_connection_id: "demo-conn",
+      calendar_event_id: null,
+      status: "canceled",
+      suggested_start_at: new Date().toISOString(),
+      suggested_end_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+      suggestion_reason: {},
+      approved_at: null,
+      write_requested_at: null,
+      write_completed_at: null,
+      last_error_message: null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+  }
+
+  const response = await fetch(`${tasksRuntime.apiBaseUrl}/tasks/${taskId}/blocks/${blockId}/cancel`, {
+    method: "POST",
+    headers: buildApiHeaders(),
+  });
+
+  if (!response.ok) {
+    const detail = await readErrorDetail(response);
+    throw new Error(detail || `Failed to cancel calendar block (${response.status})`);
+  }
+
+  return (await response.json()) as TaskCalendarBlock;
+}
+
 export type Reminder = {
   id: string;
   task_id: string | null;
