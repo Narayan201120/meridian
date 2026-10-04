@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import {
   describeTaskError,
-  dispatchReminders,
   listAllReminders,
   listReminders,
   listTasks,
@@ -12,9 +11,10 @@ import {
 } from "../lib/tasks";
 import type { AuthSession } from "../lib/auth";
 
-// Background push is not yet implemented — foreground 30s poll only.
-// Reminder deliveries from the dispatch flow below are local-only.
-const deliveryProvider = "local" as const;
+// Retained as the reported delivery channel, and now actually true: the server
+// sweeps for due reminders on its own timer and pushes over Web Push. It was
+// "local" while the only dispatcher was the interval below, which sent nothing.
+const deliveryProvider = "web_push" as const;
 
 export function useTaskSync(authSession: AuthSession | null, onError?: (m: string | null) => void) {
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -111,23 +111,25 @@ export function useTaskSync(authSession: AuthSession | null, onError?: (m: strin
       setDispatchNotice(null);
       return;
     }
-    const dispatch = async () => {
+
+    // Read only. The server delivers due reminders on its own timer now, so
+    // this must not dispatch: two dispatchers means the user gets the same
+    // reminder twice. Its whole job is to keep the list matching what the
+    // server believes, rather than guessing locally.
+    const refreshPending = async () => {
       try {
-        const res = await dispatchReminders();
-        if (res.dispatched > 0) {
-          setDispatchNotice(`${res.dispatched} reminder${res.dispatched > 1 ? "s" : ""} dispatched — marked sent`);
-          const all = await listAllReminders();
-          setPendingReminders(all.filter((r) => r.status === "sent" || r.status === "pending"));
-          void loadTasks({ silent: true });
-        } else {
-          const all = await listAllReminders("pending");
-          setPendingReminders(all.slice(0, 5));
-        }
+        // Only genuinely undelivered reminders. The old filter also matched
+        // "sent", which put reminders the user had already received into a card
+        // titled "waiting for delivery".
+        setPendingReminders(await listAllReminders("pending"));
       } catch {
+        // Keep the last known list. Clearing it would assert "you have nothing
+        // waiting", which is a claim a failed request cannot support.
       }
     };
-    void dispatch();
-    const id = setInterval(() => void dispatch(), 30_000);
+
+    void refreshPending();
+    const id = setInterval(() => void refreshPending(), 30_000);
     return () => clearInterval(id);
   }, [authSession]);
 

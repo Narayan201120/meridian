@@ -747,20 +747,14 @@ export async function listReminders(taskId: string): Promise<Reminder[]> {
   return (await response.json()) as Reminder[];
 }
 
-export async function dispatchReminders(): Promise<{ dispatched: number; reminders: Reminder[] }> {
-  if (!tasksRuntime.isApiMode) {
-    return { dispatched: 0, reminders: [] };
-  }
-  const response = await fetch(`${tasksRuntime.apiBaseUrl}/tasks/reminders/dispatch`, {
-    method: "POST",
-    headers: buildApiHeaders(),
-  });
-  if (!response.ok) {
-    const detail = await readErrorDetail(response);
-    throw new Error(detail || `Failed to dispatch reminders (${response.status})`);
-  }
-  return (await response.json()) as { dispatched: number; reminders: Reminder[] };
-}
+/**
+ * Deliberately no client for POST /tasks/reminders/dispatch.
+ *
+ * The route still exists and is still the fastest way to observe delivery by
+ * hand, but the app must not call it. The server sweeps for due reminders on
+ * its own timer, so a client that dispatched would be a second dispatcher
+ * racing the first, and the user would get the same reminder twice.
+ */
 
 export async function acknowledgeReminder(reminderId: string): Promise<Reminder> {
   if (!tasksRuntime.isApiMode) {
