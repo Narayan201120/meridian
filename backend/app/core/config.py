@@ -67,6 +67,11 @@ class Settings(BaseSettings):
         "http://localhost:19006",
         "http://127.0.0.1:19006",
     ]
+    # How often the server looks for work that has come due. Configurable rather
+    # than hardcoded because the right value depends on deployment: one process
+    # can afford a short interval, while a fleet would want it long enough that
+    # N sweeps do not all fire at once.
+    reminder_dispatch_interval_seconds: int = 30
 
     @field_validator("cors_origins", mode="before")
     @classmethod

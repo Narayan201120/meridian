@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
@@ -14,6 +15,7 @@ from app.repositories.tasks import TaskRepository
 from app.schemas.calendar import SuggestedBlock
 from app.services.google_calendar import GoogleCalendarService
 from app.services.notifications import deliver_reminder, get_push_transport
+from app.services.tasks import TaskService
 
 
 WORK_START_HOUR = 9
@@ -21,6 +23,84 @@ WORK_END_HOUR = 18
 SLOT_GRANULARITY_MINUTES = 15
 # PENDING_WRITE newer than this is treated as an in-flight Google write.
 PENDING_WRITE_IN_FLIGHT_WINDOW = timedelta(minutes=5)
+
+
+@dataclass(frozen=True)
+class DueSweep:
+    """What one pass of the periodic sweep actually did.
+
+    Returned rather than just a count so the caller can log something truthful.
+    A sweep that delivered nothing and a sweep that had no users to consider are
+    very different situations, and a bare integer cannot tell them apart.
+    """
+
+    users_with_due_reminders: int
+    reminders_delivered: int
+    tasks_activated: int
+
+
+async def run_due_sweep(session: AsyncSession) -> DueSweep:
+    """Do the work that comes due with the passage of time, for every user.
+
+    Both halves of this used to happen only because a browser tab happened to be
+    open. `dispatch_due_reminders` had a single caller, the
+    `POST /tasks/reminders/dispatch` route, and the only thing that called that
+    was a 30-second `setInterval` inside a React hook. `activate_due_tasks` was
+    reachable only from `GET /tasks`. Close the tab and no reminder was ever sent
+    and no task ever became due.
+
+    Enumerating users with due reminders and reusing the per-user methods keeps
+    the delivery and status rules in exactly one place. The alternative, a bulk
+    UPDATE over reminders, would have skipped the status side effects and the
+    per-task mutation log that `activate_due_tasks` writes.
+
+    Single process assumed. There is no deploy configuration in this repo, so
+    one process is the working assumption, but a second worker would run a
+    second sweep and deliver twice. The fix when that matters is a Postgres
+    advisory lock around this function, which cannot be written now because the
+    test harness runs on SQLite.
+    """
+    now = datetime.now(timezone.utc)
+
+    # Enumerated separately, because the two sets of users are unrelated. A user
+    # can have a task that has come due and no reminder waiting, and coupling
+    # the two would leave their task sitting in `scheduled`.
+    reminder_user_ids = list(
+        (
+            await session.scalars(
+                select(Reminder.user_id)
+                .where(Reminder.status == ReminderStatus.PENDING, Reminder.scheduled_for <= now)
+                .distinct()
+            )
+        ).all()
+    )
+    # Mirrors TaskRepository.list_due_for_activation exactly. If these criteria
+    # drift apart the sweep silently stops activating whatever the repository
+    # would have, so the two must be changed together.
+    task_user_ids = list(
+        (
+            await session.scalars(
+                select(Task.user_id)
+                .where(Task.status == TaskStatus.SCHEDULED, Task.due_at.is_not(None), Task.due_at <= now)
+                .distinct()
+            )
+        ).all()
+    )
+
+    scheduling = SchedulingService(session)
+    delivered = 0
+    for user_id in reminder_user_ids:
+        delivered += len(await scheduling.dispatch_due_reminders(user_id=user_id))
+
+    task_service = TaskService(session)
+    for user_id in task_user_ids:
+        await task_service.activate_due_tasks(user_id)
+
+    return DueSweep(
+        users_with_due_reminders=len(reminder_user_ids),
+        reminders_delivered=delivered,
+        tasks_activated=len(task_user_ids),
+    )
 
 
 def _parse_busy_intervals(raw_busy: list[dict[str, str]]) -> list[tuple[datetime, datetime]]:

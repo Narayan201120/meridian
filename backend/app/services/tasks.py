@@ -30,7 +30,7 @@ class TaskService:
         limit: int,
         offset: int,
     ) -> list[Task]:
-        await self._activate_due_tasks(user_id)
+        await self.activate_due_tasks(user_id)
         return await self.repository.list_for_user(
             user_id=user_id,
             status_filter=status_filter,
@@ -82,7 +82,7 @@ class TaskService:
         return await self.repository.refresh(task)
 
     async def get_task(self, *, user_id: UUID, task_id: UUID) -> Task:
-        await self._activate_due_tasks(user_id)
+        await self.activate_due_tasks(user_id)
         task = await self.repository.get_for_user(user_id=user_id, task_id=task_id)
         if task is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found.")
@@ -179,7 +179,14 @@ class TaskService:
         if status_value != TaskStatus.COMPLETED:
             task.completed_at = None
 
-    async def _activate_due_tasks(self, user_id: UUID) -> None:
+    async def activate_due_tasks(self, user_id: UUID) -> None:
+        """Flip scheduled tasks whose time has arrived into due_now.
+
+        Public because the server-side sweep calls it for every user, not only
+        for whoever happens to be reading GET /tasks. Leaving it private meant
+        the transition only ever happened as a side effect of someone loading
+        the list, so a task could sit in `scheduled` indefinitely.
+        """
         due_tasks = await self.repository.list_due_for_activation(
             user_id=user_id,
             due_before=self._utcnow(),
