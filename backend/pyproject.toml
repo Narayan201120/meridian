@@ -14,8 +14,8 @@ dependencies = [
   "fastapi>=0.115,<1.0",
   "httpx>=0.28,<1.0",
   "greenlet>=3.0,<4.0",
-  # VAPID signing for Web Push.
-  "py-vapid>=2.0,<3.0",
+  # VAPID signing for Web Push. Latest published is 1.9.x.
+  "py-vapid>=1.9,<2.0",
   "PyJWT[crypto]>=2.10,<3.0",
   "pydantic-settings>=2.8,<3.0",
   # The asyncio extra pulls greenlet, which asyncpg/aiosqlite need for the
