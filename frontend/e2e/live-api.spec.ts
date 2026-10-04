@@ -169,3 +169,53 @@ test("3. a task created through the API appears in the UI", async ({ page, reque
   await openTab(page, "Inbox");
   await expect(active(page).getByText(title)).toBeVisible();
 });
+
+/**
+ * THE TEST THIS PROJECT MOST NEEDED.
+ *
+ * Reminder delivery used to have exactly one trigger: a 30-second setInterval
+ * inside a React hook, calling a route that had no other caller. So a reminder
+ * was sent only while somebody had the app open in a tab. Close the tab and
+ * nothing was ever delivered, which meant a reminder for a 9am task did not
+ * arrive at 9am. It shipped because the E2E suite ran in demo mode, where that
+ * interval returns before doing anything, so no test could ever see the bug.
+ *
+ * This closes the browser context completely, then asserts the server reached a
+ * device on its own. There is no page, no fetch loop and no client alive while
+ * the assertion becomes true.
+ *
+ * The device endpoint is `https://push.e2e.invalid/...`, which passes the
+ * transport's prefix guard and then fails DNS. Delivery is genuinely attempted
+ * and genuinely fails, so the evidence is a NotificationDelivery row recording
+ * that failure. That is the honest signal: it proves the server acted, without
+ * pretending a push reached a human. Asserting a successful delivery would need
+ * a real push service and real VAPID keys, which is a different test.
+ */
+test("4. an overdue reminder is delivered with no browser open at all", async ({ page, request }) => {
+  const harness = API_BASE_URL.replace("/api/v1", "");
+
+  await ensureSignedIn(page);
+  const seeded = await request.post(`${harness}/_e2e/seed-due-reminder`);
+  expect(seeded.ok()).toBe(true);
+  const { reminder_id: reminderId } = (await seeded.json()) as { reminder_id: string };
+
+  // Nothing counts if a client is still polling, so stop it before waiting.
+  await page.context().close();
+
+  await expect
+    .poll(
+      async () => {
+        const res = await request.get(`${harness}/_e2e/deliveries`);
+        const body = (await res.json()) as {
+          deliveries: { reminder_id: string; status: string; error_message: string | null }[];
+        };
+        return body.deliveries.find((d) => d.reminder_id === reminderId)?.status ?? "none";
+      },
+      {
+        message: "the server should attempt delivery on its own, with no client running",
+        timeout: 20_000,
+        intervals: [500],
+      },
+    )
+    .not.toBe("none");
+});

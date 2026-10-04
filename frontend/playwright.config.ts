@@ -151,6 +151,12 @@ export default defineConfig({
         MERIDIAN_SUPABASE_URL: BACKEND_URL,
         MERIDIAN_TOKEN_ENCRYPTION_KEY: FERNET_KEY,
         MERIDIAN_CORS_ORIGINS: `${BASE_URL},http://127.0.0.1:${FRONTEND_PORT}`,
+        /**
+         * The sweep interval is configurable, so the test can use two seconds
+         * rather than the production default of thirty. A test that has to wait
+         * out the real interval is a test people stop running.
+         */
+        MERIDIAN_REMINDER_DISPATCH_INTERVAL_SECONDS: "2",
       },
     },
     {

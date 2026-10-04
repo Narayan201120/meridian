@@ -17,10 +17,13 @@ import asyncio
 import base64
 import hashlib
 import hmac
+import os
 import secrets
 import threading
 import time
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
+from uuid import UUID
 
 import jwt as pyjwt
 from cryptography.hazmat.primitives import serialization
@@ -28,7 +31,36 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from app.core.config import settings
+
+def _ensure_vapid_keys() -> None:
+    """Give the harness a working VAPID keypair when the environment has none.
+
+    Without keys, `dispatch_due_reminders` skips delivery entirely and leaves
+    reminders PENDING. That is the correct behaviour for a server with no push
+    configuration, but it makes the scheduler impossible to observe: nothing
+    happens, so a test cannot tell "the scheduler did not run" from "the
+    scheduler ran and had nothing to do".
+
+    Generated here rather than in playwright.config.ts so the knowledge lives in
+    one place, and via py_vapid directly so the PEM format is the one the
+    transport actually accepts rather than a hand-rolled approximation. Runs
+    before app.core.config is imported, because Settings snapshots the
+    environment at construction.
+    """
+    if os.environ.get("MERIDIAN_WEB_PUSH_PUBLIC_KEY"):
+        return
+    from py_vapid import Vapid
+
+    vapid = Vapid()
+    vapid.generate_keys()
+    os.environ["MERIDIAN_WEB_PUSH_PUBLIC_KEY"] = base64.b64encode(vapid.public_pem()).decode()
+    os.environ["MERIDIAN_WEB_PUSH_PRIVATE_KEY"] = base64.b64encode(vapid.private_pem()).decode()
+    os.environ["MERIDIAN_WEB_PUSH_SUBJECT"] = "mailto:e2e@meridian.test"
+
+
+_ensure_vapid_keys()
+
+from app.core.config import settings  # noqa: E402
 
 # Import models for side effects so Base.metadata covers every table,
 # exactly like backend/tests/conftest.py does.
@@ -36,6 +68,8 @@ from app.db.base import Base  # noqa: E402
 from app.models import (  # noqa: F401,E402 - needed to register models
     CalendarConnection,
     CalendarEvent,
+    Device,
+    DevicePlatform,
     NotificationDelivery,
     Reminder,
     Task,
@@ -44,6 +78,8 @@ from app.models import (  # noqa: F401,E402 - needed to register models
     VoiceCapture,
 )
 from app.main import create_application  # noqa: E402
+from app.models.calendar_connection import ReminderStatus, ReminderType  # noqa: E402
+from app.models.task import TaskStatus  # noqa: E402
 
 
 SEED_EMAIL = "e2e@meridian.test"
@@ -197,6 +233,86 @@ async def jwks() -> dict:
 @auth_router.post("/auth/v1/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout() -> Response:
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ---------------------------------------------------------------------------
+# Test-fixture endpoints.
+#
+# These exist so a browser test can set up a reminder that is already overdue
+# and then inspect what the server did about it. Nothing in app/ knows they
+# exist; they are scaffolding, not a backdoor. The alternative is for the test
+# to drive the whole schedule-a-block-and-confirm-it flow, which needs a Google
+# Calendar connection and so would test mocking rather than dispatch.
+#
+# The push endpoint below passes WebPushTransport's `https://push.` prefix guard
+# and then fails DNS, so delivery is genuinely attempted and genuinely fails.
+# That failure is the evidence: a NotificationDelivery row exists, which can
+# only happen if the server reached a device on its own.
+# ---------------------------------------------------------------------------
+
+
+@auth_router.post("/_e2e/seed-due-reminder")
+async def seed_due_reminder() -> dict:
+    from app.db.session import get_session_factory
+
+    factory = get_session_factory()
+    async with factory() as session:
+        task = Task(
+            user_id=UUID(SEED_USER_ID),
+            title="e2e overdue reminder",
+            status=TaskStatus.INBOX,
+        )
+        session.add(task)
+        await session.flush()
+
+        # A minute in the past, so it is due on the very next sweep.
+        reminder = Reminder(
+            user_id=UUID(SEED_USER_ID),
+            task_id=task.id,
+            type=ReminderType.DUE_DATE,
+            scheduled_for=datetime.now(timezone.utc) - timedelta(minutes=1),
+            status=ReminderStatus.PENDING,
+        )
+        device = Device(
+            user_id=UUID(SEED_USER_ID),
+            platform=DevicePlatform.WEB,
+            push_token="https://push.e2e.invalid/subscription/never-resolves",
+        )
+        session.add_all([reminder, device])
+        await session.commit()
+        return {"task_id": str(task.id), "reminder_id": str(reminder.id)}
+
+
+@auth_router.get("/_e2e/deliveries")
+async def list_deliveries() -> dict:
+    """What the server actually attempted, for assertions and for eyeballing."""
+    from sqlalchemy import select
+
+    from app.db.session import get_session_factory
+
+    factory = get_session_factory()
+    async with factory() as session:
+        rows = list(
+            (
+                await session.scalars(
+                    select(NotificationDelivery)
+                    .where(NotificationDelivery.user_id == UUID(SEED_USER_ID))
+                    .order_by(NotificationDelivery.attempted_at.desc())
+                )
+            ).all()
+        )
+        return {
+            "count": len(rows),
+            "deliveries": [
+                {
+                    "reminder_id": str(r.reminder_id),
+                    "provider": r.provider,
+                    "status": r.status.value if hasattr(r.status, "value") else str(r.status),
+                    "error_message": r.error_message,
+                }
+                for r in rows
+            ],
+        }
 
 
 async def _init_file_db() -> None:
