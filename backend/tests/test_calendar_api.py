@@ -15,13 +15,18 @@ async def test_calendar_status_not_connected(client):
 
 
 @pytest.mark.asyncio
-async def test_calendar_status_reports_active_when_token_decrypts(client, db_session):
+async def test_calendar_status_reports_active_when_token_decrypts(client, db_session, monkeypatch):
     """A connection whose token is readable must report active."""
     from uuid import UUID
+
+    from cryptography.fernet import Fernet
 
     from app.core.config import settings
     from app.models import CalendarConnection
 
+    # Set explicitly: the local .env has a key, CI does not, and a test that
+    # passes only on a developer machine is worse than no test.
+    monkeypatch.setattr(settings, "token_encryption_key", Fernet.generate_key().decode())
     cipher = settings.get_fernet()
     created = await client.post("/api/v1/tasks", json={"title": "Status owner"})
     user_id = UUID(created.json()["user_id"])
@@ -40,7 +45,7 @@ async def test_calendar_status_reports_active_when_token_decrypts(client, db_ses
 
 
 @pytest.mark.asyncio
-async def test_calendar_status_downgrades_when_token_undecryptable(client, db_session):
+async def test_calendar_status_downgrades_when_token_undecryptable(client, db_session, monkeypatch):
     """A stale Fernet key must not leave the UI showing a working connection.
 
     Reported as active, the app offers Sync calendar and then fails on first use
@@ -48,8 +53,11 @@ async def test_calendar_status_downgrades_when_token_undecryptable(client, db_se
     """
     from uuid import UUID
 
+    from cryptography.fernet import Fernet
+
     from app.models import CalendarConnection
 
+    monkeypatch.setattr(settings, "token_encryption_key", Fernet.generate_key().decode())
     created = await client.post("/api/v1/tasks", json={"title": "Broken owner"})
     user_id = UUID(created.json()["user_id"])
     conn = CalendarConnection(
@@ -58,7 +66,7 @@ async def test_calendar_status_downgrades_when_token_undecryptable(client, db_se
         provider_account_id="primary",
         status="active",
         # Encrypted under a different key, so decryption fails.
-        access_token_ciphertext="bm90LWRlY3J5cHRhYmxlLXdpdGgtdGhpcy1rZXk=",
+        access_token_ciphertext=Fernet(Fernet.generate_key()).encrypt(b"token").decode(),
     )
     db_session.add(conn)
     await db_session.commit()
@@ -74,6 +82,72 @@ async def test_calendar_status_downgrades_when_token_undecryptable(client, db_se
     await db_session.refresh(conn)
     assert conn.status == "error"
     assert conn.last_error_message
+
+
+@pytest.mark.asyncio
+async def test_calendar_status_leaves_connection_alone_when_key_unset(client, db_session, monkeypatch):
+    """A server with no encryption key must not blame the user's connection.
+
+    The obvious implementation catches whatever `_decrypt` raises, but that
+    raises for three reasons: no key configured, a malformed key, and a token
+    that genuinely will not decrypt. Only the third is the user's problem, and
+    only the third should be written to their row. The first two are ours to fix.
+    """
+    from uuid import UUID
+
+    from cryptography.fernet import Fernet
+
+    from app.models import CalendarConnection
+
+    created = await client.post("/api/v1/tasks", json={"title": "Unconfigured owner"})
+    user_id = UUID(created.json()["user_id"])
+    conn = CalendarConnection(
+        user_id=user_id,
+        provider="google",
+        provider_account_id="primary",
+        status="active",
+        access_token_ciphertext=Fernet(Fernet.generate_key()).encrypt(b"token").decode(),
+    )
+    db_session.add(conn)
+    await db_session.commit()
+
+    monkeypatch.setattr(settings, "token_encryption_key", None)
+    resp = await client.get("/api/v1/calendar/google/status")
+    assert resp.status_code == 503, "an unconfigured server is a 503, not a per-user error"
+
+    await db_session.refresh(conn)
+    assert conn.status == "active", "must not downgrade a connection for a server-side misconfiguration"
+    assert conn.last_error_message is None
+
+
+@pytest.mark.asyncio
+async def test_calendar_status_leaves_connection_alone_when_key_malformed(client, db_session, monkeypatch):
+    """Same rule for a key that exists but is not a valid Fernet key."""
+    from uuid import UUID
+
+    from cryptography.fernet import Fernet
+
+    from app.models import CalendarConnection
+
+    created = await client.post("/api/v1/tasks", json={"title": "Bad key owner"})
+    user_id = UUID(created.json()["user_id"])
+    conn = CalendarConnection(
+        user_id=user_id,
+        provider="google",
+        provider_account_id="primary",
+        status="active",
+        access_token_ciphertext=Fernet(Fernet.generate_key()).encrypt(b"token").decode(),
+    )
+    db_session.add(conn)
+    await db_session.commit()
+
+    monkeypatch.setattr(settings, "token_encryption_key", "not-a-fernet-key")
+    resp = await client.get("/api/v1/calendar/google/status")
+    assert resp.status_code == 500
+
+    await db_session.refresh(conn)
+    assert conn.status == "active", "must not downgrade a connection for a server-side misconfiguration"
+    assert conn.last_error_message is None
 
 
 @pytest.mark.asyncio

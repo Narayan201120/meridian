@@ -5,6 +5,7 @@ from uuid import UUID
 
 import httpx
 import jwt
+from cryptography.fernet import Fernet
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -180,15 +181,41 @@ class GoogleCalendarService:
             )
         )
 
-    def _decrypt(self, ciphertext: str | None) -> str | None:
-        if not ciphertext:
-            return None
+    def _cipher(self) -> Fernet:
+        """The configured Fernet, or fail loudly.
+
+        A missing or malformed key is server misconfiguration, not a broken user
+        connection. Raising keeps that distinction out of the caller's hands so
+        it cannot get recorded against somebody's calendar.
+        """
         try:
             cipher = settings.get_fernet()
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
         if cipher is None:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Token encryption is not configured.")
+        return cipher
+
+    def token_is_readable(self, connection: CalendarConnection) -> bool:
+        """Whether the stored token still decrypts with the configured key.
+
+        False means the key was rotated or the ciphertext is damaged, which the
+        user can fix by reconnecting. It raises when no usable key exists at all,
+        because telling the user to reconnect would not help.
+        """
+        if not connection.access_token_ciphertext:
+            return False
+        cipher = self._cipher()
+        try:
+            cipher.decrypt(connection.access_token_ciphertext.encode())
+        except Exception:
+            return False
+        return True
+
+    def _decrypt(self, ciphertext: str | None) -> str | None:
+        if not ciphertext:
+            return None
+        cipher = self._cipher()
         try:
             return cipher.decrypt(ciphertext.encode()).decode()
         except Exception as exc:
