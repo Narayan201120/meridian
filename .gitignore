@@ -19,6 +19,13 @@ verify-*.png
 frontend/test-results/
 frontend/playwright-report/
 
+# SQLite database the E2E harness creates. It is rebuilt from scratch on every
+# `bun run e2e:live`, holds no real user data, and must never be committed.
+backend/e2e.db
+backend/e2e.db-journal
+backend/e2e.db-wal
+backend/e2e.db-shm
+
 # OS/editor noise
 .DS_Store
 Thumbs.db
