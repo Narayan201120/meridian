@@ -512,6 +512,30 @@ export async function getCalendarStatus(): Promise<string> {
   return payload.status;
 }
 
+/**
+ * Builds the Google consent URL. `returnTo` rides along in the signed OAuth state
+ * so the callback can bounce the browser back into the app instead of leaving the
+ * user staring at a bare JSON response.
+ */
+export async function getCalendarAuthorizationUrl(returnTo?: string): Promise<string> {
+  if (!tasksRuntime.isApiMode) {
+    throw new Error("Calendar connection needs API mode.");
+  }
+
+  const query = returnTo ? `?return_to=${encodeURIComponent(returnTo)}` : "";
+  const response = await fetch(`${tasksRuntime.apiBaseUrl}/calendar/google/authorize${query}`, {
+    headers: buildApiHeaders(),
+  });
+
+  if (!response.ok) {
+    const detail = await readErrorDetail(response);
+    throw new Error(detail || `Failed to start calendar connection (${response.status})`);
+  }
+
+  const payload = (await response.json()) as { authorization_url: string };
+  return payload.authorization_url;
+}
+
 export async function suggestBlocks(taskId: string, input: SuggestBlocksInput = {}): Promise<SuggestBlocksResponse> {
   if (!tasksRuntime.isApiMode) {
     const now = new Date();

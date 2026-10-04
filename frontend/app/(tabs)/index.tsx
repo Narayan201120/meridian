@@ -48,7 +48,7 @@ export default function HomeTab() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const { authSession, authEmail, setAuthEmail, authPassword, setAuthPassword, isSigningIn, isSigningOut, handleSignIn, handleSignOut } = useAuth(setErrorMessage);
   const { tasks, setTasks, isLoading, dueNotice, remindersByTask, pendingReminders, dispatchNotice, setDispatchNotice, setPendingReminders, loadTasks, refreshRemindersForTask, replaceTask } = useTaskSync(authSession, setErrorMessage);
-  const { calendarStatus, isSyncing, handleSyncCalendar } = useCalendarSync(authSession, setErrorMessage, setDispatchNotice);
+  const { calendarStatus, isSyncing, isConnecting, handleSyncCalendar, handleConnectCalendar } = useCalendarSync(authSession, setErrorMessage, setDispatchNotice);
   const {
     activeTaskId, activeTaskAction, scheduleEditorTaskId, scheduleEditorValue, setScheduleEditorValue,
     taskEditorTaskId, taskEditorTitle, taskEditorNotes, taskEditorPriority, taskEditorDuration,
@@ -120,9 +120,11 @@ export default function HomeTab() {
             authSession={authSession}
             calendarStatus={calendarStatus}
             isSyncing={isSyncing}
+            isConnecting={isConnecting}
             isSigningOut={isSigningOut}
             onRefresh={() => void loadTasks()}
             onSync={() => void handleSyncCalendar()}
+            onConnect={() => void handleConnectCalendar()}
             onSignOut={() => void handleSignOutAndClear()}
           />
 

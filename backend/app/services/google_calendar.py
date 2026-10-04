@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urlencode
+from typing import Any
+from urllib.parse import urlencode, urlparse
 from uuid import UUID
 
 import httpx
@@ -24,13 +25,15 @@ class GoogleCalendarService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    def authorization_url(self, user_id: UUID) -> str:
+    def authorization_url(self, user_id: UUID, return_to: str | None = None) -> str:
         self._require_config()
-        state = jwt.encode(
-            {"sub": str(user_id), "exp": datetime.now(timezone.utc) + timedelta(minutes=10)},
-            settings.oauth_state_secret,
-            algorithm="HS256",
-        )
+        claims: dict[str, Any] = {
+            "sub": str(user_id),
+            "exp": datetime.now(timezone.utc) + timedelta(minutes=10),
+        }
+        if return_to:
+            claims["return_to"] = return_to
+        state = jwt.encode(claims, settings.oauth_state_secret, algorithm="HS256")
         query = urlencode(
             {
                 "client_id": settings.google_calendar_client_id,
@@ -44,13 +47,14 @@ class GoogleCalendarService:
         )
         return f"{GOOGLE_AUTH_URL}?{query}"
 
-    async def complete_authorization(self, *, code: str, state: str) -> CalendarConnection:
+    async def complete_authorization(self, *, code: str, state: str) -> tuple[CalendarConnection, str | None]:
         self._require_config()
         try:
             claims = jwt.decode(state, settings.oauth_state_secret, algorithms=["HS256"])
             user_id = UUID(claims["sub"])
         except (jwt.PyJWTError, KeyError, ValueError) as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired OAuth state.") from exc
+        return_to = self._safe_return_to(claims.get("return_to"))
         async with httpx.AsyncClient(timeout=15) as client:
             response = await client.post(GOOGLE_TOKEN_URL, data={"code": code, "client_id": settings.google_calendar_client_id, "client_secret": settings.google_calendar_client_secret, "redirect_uri": settings.google_calendar_redirect_uri, "grant_type": "authorization_code"})
         if response.is_error:
@@ -81,7 +85,7 @@ class GoogleCalendarService:
             self.session.add(connection)
         await self.session.commit()
         await self.session.refresh(connection)
-        return connection
+        return connection, return_to
 
     async def create_calendar_event(self, user_id: UUID, summary: str, start_at: datetime, end_at: datetime) -> dict:
         connection = await self.get_connection(user_id)
@@ -333,6 +337,27 @@ class GoogleCalendarService:
                 e = e.replace(tzinfo=timezone.utc)
             busy.append({"start": s.isoformat().replace("+00:00", "Z"), "end": e.isoformat().replace("+00:00", "Z")})
         return busy
+
+    @staticmethod
+    def _safe_return_to(raw: str | None) -> str | None:
+        """Only bounce back to an origin we already trust.
+
+        `return_to` rides in the signed state, but anyone can hand a victim a
+        link to /authorize?return_to=... and the callback would happily 302
+        there. Restrict to the configured CORS origins so the callback can never
+        be used as an open redirect.
+        """
+        if not raw:
+            return None
+        try:
+            parsed = urlparse(raw)
+        except ValueError:
+            return None
+        if parsed.scheme not in {"http", "https"}:
+            return None
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+        allowed = {o.rstrip("/") for o in settings.cors_origins}
+        return raw if origin in allowed else None
 
     @staticmethod
     def _require_config() -> None:

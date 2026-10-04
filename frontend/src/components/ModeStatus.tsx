@@ -9,17 +9,21 @@ export function ModeStatus({
   authSession,
   calendarStatus,
   isSyncing,
+  isConnecting,
   isSigningOut,
   onRefresh,
   onSync,
+  onConnect,
   onSignOut,
 }: {
   authSession: AuthSession | null;
   calendarStatus: string | null;
   isSyncing: boolean;
+  isConnecting: boolean;
   isSigningOut: boolean;
   onRefresh: () => void;
   onSync: () => void;
+  onConnect: () => void;
   onSignOut: () => void;
 }) {
   const calendarDot = calendarStatus === "active" ? "bg-brass" : "bg-slate500";
@@ -54,7 +58,11 @@ export function ModeStatus({
           <Button variant="secondary" size="sm" onPress={onRefresh}>Refresh</Button>
           {calendarStatus === "active" ? (
             <Button variant="secondary" size="sm" loading={isSyncing} onPress={onSync}>{isSyncing ? "Syncing..." : "Sync calendar"}</Button>
-          ) : null}
+          ) : (
+            <Button variant="secondary" size="sm" loading={isConnecting} onPress={onConnect}>
+              {isConnecting ? "Opening Google..." : "Connect calendar"}
+            </Button>
+          )}
           <Button variant="destructive" size="sm" loading={isSigningOut} onPress={onSignOut}>{isSigningOut ? "Signing out..." : "Sign out"}</Button>
         </View>
       ) : (

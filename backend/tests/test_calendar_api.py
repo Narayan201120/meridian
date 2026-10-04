@@ -3,6 +3,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from app.core.config import settings
+from app.services.google_calendar import GoogleCalendarService
+
 
 @pytest.mark.asyncio
 async def test_calendar_status_not_connected(client):
@@ -542,3 +545,49 @@ async def test_calendar_sync_and_cached_suggest(client, db_session):
                 s_start = datetime.fromisoformat(s["suggested_start_at"].replace("Z", "+00:00"))
                 # should not overlap busy
                 assert not (busy_start <= s_start < busy_end)
+
+
+class TestReturnToGuard:
+    """`return_to` is echoed into a 302 after consent, so it must never become
+    an open redirect. Only origins already in CORS_ORIGINS are allowed back."""
+
+    @pytest.mark.parametrize(
+        "candidate",
+        [
+            "http://localhost:8081",
+            "http://localhost:8081/inbox",
+            "http://localhost:8081/?calendar=connected",
+            "http://127.0.0.1:8081",
+        ],
+    )
+    def test_allows_configured_origins(self, candidate):
+        assert GoogleCalendarService._safe_return_to(candidate) == candidate
+
+    @pytest.mark.parametrize(
+        "candidate",
+        [
+            "https://evil.example.com",
+            # Suffix trick: netloc is not equal to an allowed origin.
+            "http://localhost:8081.evil.example.com",
+            "http://localhost:8081@evil.example.com",
+            # Scheme-relative and non-http schemes.
+            "//evil.example.com",
+            "javascript:alert(1)",
+            "data:text/html,<script>alert(1)</script>",
+            # Wrong port / wrong scheme for an otherwise-known host.
+            "http://localhost:9999",
+            "https://localhost:8081",
+            # Bare host with no scheme cannot be validated.
+            "localhost:8081",
+            "",
+        ],
+    )
+    def test_rejects_everything_else(self, candidate):
+        assert GoogleCalendarService._safe_return_to(candidate) is None
+
+    def test_rejects_missing_value(self):
+        assert GoogleCalendarService._safe_return_to(None) is None
+
+    def test_trailing_slash_in_config_still_matches(self, monkeypatch):
+        monkeypatch.setattr(settings, "cors_origins", ["http://localhost:8081/"])
+        assert GoogleCalendarService._safe_return_to("http://localhost:8081/x") == "http://localhost:8081/x"

@@ -2,6 +2,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user_id
@@ -13,13 +14,24 @@ router = APIRouter()
 
 
 @router.get("/google/authorize")
-async def google_authorize(current_user_id: Annotated[UUID, Depends(get_current_user_id)], session: Annotated[AsyncSession, Depends(get_db_session)]) -> dict[str, str]:
-    return {"authorization_url": GoogleCalendarService(session).authorization_url(current_user_id)}
+async def google_authorize(
+    current_user_id: Annotated[UUID, Depends(get_current_user_id)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    return_to: str | None = Query(default=None, description="Absolute URL to 302 back to after consent"),
+) -> dict[str, str]:
+    return {"authorization_url": GoogleCalendarService(session).authorization_url(current_user_id, return_to)}
 
 
-@router.get("/google/callback")
-async def google_callback(code: str = Query(), state: str = Query(), session: AsyncSession = Depends(get_db_session)) -> dict[str, str]:
-    connection = await GoogleCalendarService(session).complete_authorization(code=code, state=state)
+@router.get("/google/callback", response_model=None)
+async def google_callback(
+    code: str = Query(),
+    state: str = Query(),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict[str, str] | RedirectResponse:
+    connection, return_to = await GoogleCalendarService(session).complete_authorization(code=code, state=state)
+    if return_to:
+        # 303 so the browser follows with GET and lands back in the app.
+        return RedirectResponse(url=return_to, status_code=303)
     return {"status": "connected", "provider": connection.provider}
 
 
