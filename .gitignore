@@ -7,6 +7,15 @@ backend/.venv/
 
 # Local env files
 backend/.env
+frontend/.env
+
+# Run artifacts from local dev / verification
+*.log
+backend/backend-run.log
+frontend/expo*.log
+.playwright-mcp/
+.serena/
+verify-*.png
 
 # OS/editor noise
 .DS_Store
