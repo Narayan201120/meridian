@@ -30,18 +30,30 @@ export default defineConfig({
     reducedMotion: "reduce",
   },
 
-  // `channel: "chrome"` uses the Chrome already installed on the machine.
-  // cdn.playwright.dev is unreachable from this network, so `bunx playwright
-  // install chromium` cannot fetch the bundled build. Set E2E_BROWSER_CHANNEL=""
-  // once the download works and the bundled Chromium will be used instead.
+  /**
+   * Browser selection.
+   *
+   * Locally we drive the Chrome already installed on the machine, because
+   * cdn.playwright.dev is unreachable from this network and the bundled
+   * Chromium cannot be downloaded. In CI the bundled build is installed by the
+   * workflow, so use it there and get hermetic, version-pinned behaviour.
+   *
+   * E2E_BROWSER_CHANNEL overrides both; pass "chromium" to force the bundled
+   * build, or "chrome" to force system Chrome.
+   */
   projects: [
-    {
-      name: process.env.E2E_BROWSER_CHANNEL === "" ? "chromium" : "chrome",
-      use: {
-        ...devices["Desktop Chrome"],
-        ...(process.env.E2E_BROWSER_CHANNEL === "" ? {} : { channel: "chrome" }),
-      },
-    },
+    (() => {
+      const requested = process.env.E2E_BROWSER_CHANNEL;
+      const channel = requested ?? (process.env.CI ? "chromium" : "chrome");
+      return {
+        name: channel,
+        use: {
+          ...devices["Desktop Chrome"],
+          // `chromium` here means Playwright's own build, which has no channel.
+          ...(channel === "chromium" ? {} : { channel }),
+        },
+      };
+    })(),
   ],
 
   webServer: {

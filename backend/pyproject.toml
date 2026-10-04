@@ -13,9 +13,12 @@ dependencies = [
   "cryptography>=44,<47",
   "fastapi>=0.115,<1.0",
   "httpx>=0.28,<1.0",
+  "greenlet>=3.0,<4.0",
   "PyJWT[crypto]>=2.10,<3.0",
   "pydantic-settings>=2.8,<3.0",
-  "sqlalchemy>=2.0.40,<3.0",
+  # The asyncio extra pulls greenlet, which asyncpg/aiosqlite need for the
+  # async engine. Plain sqlalchemy fails at import with a confusing error.
+  "sqlalchemy[asyncio]>=2.0.40,<3.0",
   "uvicorn[standard]>=0.34,<1.0",
 ]
 
@@ -25,7 +28,7 @@ dev = [
   "httpx>=0.28,<1.0",
   "pytest>=8.3,<9.0",
   "pytest-asyncio>=0.24,<1.0",
-  "ruff>=0.11,<1.0",
+  "ruff>=0.15,<0.16",
 ]
 
 [tool.pytest.ini_options]
