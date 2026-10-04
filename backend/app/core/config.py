@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     database_echo: bool = False
     supabase_url: str | None = None
     supabase_jwt_audience: str = "authenticated"
+    # Tolerance for clock drift between this host and Supabase. Without it a
+    # token minted a second ahead of our clock is rejected as "not yet valid",
+    # which fails sign-in intermittently on machines whose clock runs behind.
+    supabase_jwt_leeway_seconds: int = 60
     google_calendar_client_id: str | None = None
     google_calendar_client_secret: str | None = None
     google_calendar_redirect_uri: str = "http://127.0.0.1:8000/api/v1/calendar/google/callback"

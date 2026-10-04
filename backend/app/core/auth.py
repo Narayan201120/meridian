@@ -31,6 +31,10 @@ def verify_supabase_jwt(token: str) -> dict[str, Any]:
             algorithms=["ES256", "RS256"],
             audience=settings.supabase_jwt_audience,
             issuer=settings.supabase_jwt_issuer,
+            # PyJWT validates `iat` strictly, so a token minted even one second
+            # ahead of this host's clock raises ImmatureSignatureError and the
+            # request 401s. Leeway absorbs that drift.
+            leeway=settings.supabase_jwt_leeway_seconds,
         )
     except InvalidTokenError as exc:
         raise HTTPException(
