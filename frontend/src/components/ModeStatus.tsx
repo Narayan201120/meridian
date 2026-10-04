@@ -11,20 +11,30 @@ export function ModeStatus({
   isSyncing,
   isConnecting,
   isSigningOut,
+  pushState,
+  pushMessage,
+  isPushBusy,
   onRefresh,
   onSync,
   onConnect,
   onSignOut,
+  onEnablePush,
+  onDisablePush,
 }: {
   authSession: AuthSession | null;
   calendarStatus: string | null;
   isSyncing: boolean;
   isConnecting: boolean;
   isSigningOut: boolean;
+  pushState: { supported: boolean; reason?: string; subscribed?: boolean; permission?: string } | null;
+  pushMessage: string | null;
+  isPushBusy: boolean;
   onRefresh: () => void;
   onSync: () => void;
   onConnect: () => void;
   onSignOut: () => void;
+  onEnablePush: () => void;
+  onDisablePush: () => void;
 }) {
   const calendarDot = calendarStatus === "active" ? "bg-brass" : "bg-slate500";
   const { scheme, toggle } = useTheme();
@@ -49,6 +59,14 @@ export function ModeStatus({
               <View className={`h-1.5 w-1.5 rounded-full ${calendarDot}`} />
               <Text className="text-captiontext text-[14px] leading-5">Calendar: {calendarStatus ?? "checking..."}</Text>
             </View>
+            {pushState?.supported ? (
+              <View className="flex-row items-center gap-1.5">
+                <View className={`h-1.5 w-1.5 rounded-full ${pushState.subscribed ? "bg-brass" : "bg-slate500"}`} />
+                <Text className="text-captiontext text-[14px] leading-5">
+                  Reminders: {pushState.subscribed ? "on" : "only while the app is open"}
+                </Text>
+              </View>
+            ) : null}
           </>
         ) : null}
       </View>
@@ -63,6 +81,20 @@ export function ModeStatus({
               {isConnecting ? "Opening Google..." : "Connect calendar"}
             </Button>
           )}
+          {pushState?.supported ? (
+            pushState.subscribed ? (
+              <Button variant="ghost" size="sm" loading={isPushBusy} onPress={onDisablePush}>
+                {isPushBusy ? "Turning off..." : "Turn off reminders"}
+              </Button>
+            ) : (
+              <Button variant="secondary" size="sm" loading={isPushBusy} onPress={onEnablePush}>
+                {isPushBusy ? "Enabling..." : "Enable reminders"}
+              </Button>
+            )
+          ) : null}
+          {pushMessage ? (
+            <Text className="text-captiontext text-[14px] leading-5 w-full">{pushMessage}</Text>
+          ) : null}
           <Button variant="destructive" size="sm" loading={isSigningOut} onPress={onSignOut}>{isSigningOut ? "Signing out..." : "Sign out"}</Button>
         </View>
       ) : (

@@ -264,7 +264,7 @@ async function readErrorDetail(response: Response): Promise<string> {
   }
 }
 
-function buildApiHeaders(contentType?: string): HeadersInit {
+export function buildApiHeaders(contentType?: string): HeadersInit {
   const accessToken = getAccessToken();
 
   if (accessToken === null) {

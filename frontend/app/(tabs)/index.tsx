@@ -15,6 +15,7 @@ import { PendingRemindersCard } from "../../src/components/PendingRemindersCard"
 import TaskCardEditor from "../../src/components/TaskCardEditor";
 import { useAuth } from "../../src/hooks/useAuth";
 import { useCalendarSync } from "../../src/hooks/useCalendarSync";
+import { usePushNotifications } from "../../src/hooks/usePushNotifications";
 
 import { tasksRuntime, type Task } from "../../src/lib/tasks";
 import { useTaskMutations } from "../../src/hooks/useTaskMutations";
@@ -49,6 +50,7 @@ export default function HomeTab() {
   const { authSession, authEmail, setAuthEmail, authPassword, setAuthPassword, isSigningIn, isSigningOut, handleSignIn, handleSignOut } = useAuth(setErrorMessage);
   const { tasks, setTasks, isLoading, dueNotice, remindersByTask, pendingReminders, dispatchNotice, setDispatchNotice, setPendingReminders, loadTasks, refreshRemindersForTask, replaceTask } = useTaskSync(authSession, setErrorMessage);
   const { calendarStatus, isSyncing, isConnecting, handleSyncCalendar, handleConnectCalendar } = useCalendarSync(authSession, setErrorMessage, setDispatchNotice);
+  const { state: pushState, message: pushMessage, isBusy: isPushBusy, enable: enablePush, disable: disablePush } = usePushNotifications();
   const {
     activeTaskId, activeTaskAction, scheduleEditorTaskId, scheduleEditorValue, setScheduleEditorValue,
     taskEditorTaskId, taskEditorTitle, taskEditorNotes, taskEditorPriority, taskEditorDuration,
@@ -121,6 +123,11 @@ export default function HomeTab() {
             calendarStatus={calendarStatus}
             isSyncing={isSyncing}
             isConnecting={isConnecting}
+            pushState={pushState}
+            pushMessage={pushMessage}
+            isPushBusy={isPushBusy}
+            onEnablePush={() => void enablePush()}
+            onDisablePush={() => void disablePush()}
             isSigningOut={isSigningOut}
             onRefresh={() => void loadTasks()}
             onSync={() => void handleSyncCalendar()}
@@ -166,3 +173,4 @@ export default function HomeTab() {
     </>
   );
 }
+
