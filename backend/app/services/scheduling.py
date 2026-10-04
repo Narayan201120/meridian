@@ -6,12 +6,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from sqlalchemy import select
 
+from app.core.config import settings
 from app.models.calendar_connection import CalendarEvent, NotificationDelivery, NotificationDeliveryStatus, Reminder, ReminderStatus, ReminderType, TaskCalendarBlock, TaskCalendarBlockStatus
 from app.models.task import Task
 from app.models.task import TaskStatus
 from app.repositories.tasks import TaskRepository
 from app.schemas.calendar import SuggestedBlock
 from app.services.google_calendar import GoogleCalendarService
+from app.services.notifications import deliver_reminder, get_push_transport
 
 
 WORK_START_HOUR = 9
@@ -588,6 +590,14 @@ class SchedulingService:
         await self.session.commit()
 
     async def dispatch_due_reminders(self, *, user_id: UUID) -> list[Reminder]:
+        """Deliver due reminders to the user's devices.
+
+        A reminder is only marked SENT when at least one device accepted it.
+        Previously this wrote an fcm delivery row, marked it SENT, and moved on,
+        so nothing ever reached the user while the UI reported success. With no
+        registered devices the reminder stays PENDING and is retried, which is
+        the honest outcome.
+        """
         now = datetime.now(timezone.utc)
         result = await self.session.scalars(
             select(Reminder).where(
@@ -599,16 +609,16 @@ class SchedulingService:
         due = list(result.all())
         dispatched: list[Reminder] = []
         for reminder in due:
-            # Create delivery (fcm mock as sent)
-            delivery = NotificationDelivery(
-                user_id=user_id,
-                reminder_id=reminder.id,
-                provider="fcm",
-                status=NotificationDeliveryStatus.SENT,
-                attempted_at=now,
-                delivered_at=now,
-            )
-            self.session.add(delivery)
+            # Check configuration before building a transport: get_push_transport raises
+            # 503 when VAPID is absent, and that must not surface as an API error
+            # for an ordinary dispatch poll. Leave the reminder pending instead,
+            # which is the honest outcome when nothing could be sent.
+            if not settings.web_push_public_key:
+                continue
+            transport = get_push_transport()
+            sent = await deliver_reminder(self.session, user_id=user_id, reminder=reminder, transport=transport)
+            if sent == 0:
+                continue
             reminder.status = ReminderStatus.SENT
             reminder.sent_at = now
             dispatched.append(reminder)

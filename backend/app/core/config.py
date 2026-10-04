@@ -5,6 +5,20 @@ from pydantic import field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
+def _decode_pem(value: str | None) -> str | None:
+    """VAPID keys are stored base64-encoded because a PEM spans multiple lines
+    and dotenv cannot represent that as one value."""
+    if not value:
+        return None
+    import base64
+
+    try:
+        return base64.b64decode(value).decode()
+    except Exception:
+        # Tolerate a raw PEM already present in the environment.
+        return value if "BEGIN" in value else None
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -29,6 +43,24 @@ class Settings(BaseSettings):
     google_calendar_redirect_uri: str = "http://127.0.0.1:8000/api/v1/calendar/google/callback"
     token_encryption_key: str | None = None
     google_oauth_state_secret: str | None = None
+    # Web Push (VAPID), base64-encoded PEM. Generate with:
+    #   python scripts/generate_vapid.py
+    web_push_public_key: str | None = None
+    web_push_private_key: str | None = None
+    # Must be a mailto: or https: URL identifying the sender.
+    web_push_subject: str | None = None
+
+    @property
+    def web_push_public_key_pem(self) -> str | None:
+        return _decode_pem(self.web_push_public_key)
+
+    @property
+    def web_push_private_key_pem(self) -> str | None:
+        return _decode_pem(self.web_push_private_key)
+
+    @property
+    def web_push_enabled(self) -> bool:
+        return bool(self.web_push_public_key and self.web_push_private_key and self.web_push_subject)
     cors_origins: Annotated[list[str], NoDecode] = [
         "http://localhost:8081",
         "http://127.0.0.1:8081",

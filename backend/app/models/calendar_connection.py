@@ -174,6 +174,34 @@ class NotificationDelivery(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow, server_default=text("CURRENT_TIMESTAMP"))
 
 
+class DevicePlatform(StrEnum):
+    IOS = "ios"
+    ANDROID = "android"
+    WEB = "web"
+
+
+class Device(Base):
+    """A push target for a user.
+
+    The push endpoint is the natural key: a browser re-subscribing after a token
+    refresh should update this row rather than accumulate duplicates.
+    """
+
+    __tablename__ = "devices"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4, server_default=text("gen_random_uuid()"))
+    user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
+    platform: Mapped[DevicePlatform] = mapped_column(
+        SqlEnum(DevicePlatform, name="device_platform", native_enum=True, create_type=False, values_callable=_enum_values),
+        nullable=False,
+    )
+    device_name: Mapped[str | None] = mapped_column(Text)
+    push_token: Mapped[str | None] = mapped_column(Text)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow, server_default=text("CURRENT_TIMESTAMP"))
+
+
 class VoiceCapture(Base):
     __tablename__ = "voice_captures"
 
