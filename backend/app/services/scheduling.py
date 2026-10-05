@@ -712,13 +712,23 @@ class SchedulingService:
         reminder = await self.session.scalar(select(Reminder).where(Reminder.id == reminder_id, Reminder.user_id == user_id))
         if reminder is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reminder not found.")
-        # Mark deliveries as acknowledged
+        # Ack semantics: the user has seen this reminder, so it must stop being
+        # retried (the due sweep only reads PENDING rows) and stop being listed
+        # as pending. A reminder that was never delivered must not become SENT:
+        # SENT means a device actually accepted it, and conflating "seen and
+        # dismissed" with "delivered" would lie about what happened. ReminderStatus
+        # has no ACKNOWLEDGED value, and adding one needs a Postgres enum
+        # migration, so an undelivered reminder settles to CANCELED -- the
+        # existing terminal "no further attempts" state, still distinct from SENT.
+        # A reminder that did reach a device keeps its honest SENT status.
+        # Delivery rows all settle to ACKNOWLEDGED (that enum already has the
+        # value); leaving PENDING attempts under an acknowledged reminder would
+        # imply work still outstanding that will never happen.
         deliveries = await self.session.scalars(select(NotificationDelivery).where(NotificationDelivery.reminder_id == reminder_id, NotificationDelivery.user_id == user_id))
         for d in deliveries.all():
             d.status = NotificationDeliveryStatus.ACKNOWLEDGED
-        if reminder.status == ReminderStatus.SENT:
-            # keep sent, but acknowledge delivery suffices; we keep reminder as SENT
-            pass
+        if reminder.status != ReminderStatus.SENT:
+            reminder.status = ReminderStatus.CANCELED
         await self.session.commit()
         await self.session.refresh(reminder)
         return reminder

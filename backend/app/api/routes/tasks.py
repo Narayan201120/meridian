@@ -95,7 +95,7 @@ async def list_all_reminders(
     return [ReminderRead.model_validate(r) for r in items]
 
 
-@router.post("/reminders/dispatch", response_model=DispatchResponse, summary="Dispatch due reminders (create deliveries, mark sent)")
+@router.post("/reminders/dispatch", response_model=DispatchResponse, summary="Dispatch due reminders (deliver where possible; undeliverable reminders stay pending)")
 async def dispatch_reminders(
     current_user_id: Annotated[UUID, Depends(get_current_user_id)],
     scheduling_service: Annotated[SchedulingService, Depends(get_scheduling_service)],
