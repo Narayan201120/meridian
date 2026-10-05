@@ -168,32 +168,24 @@ test.describe("calendar notices get their own banner, not the Reminders one", ()
   });
 
   test("the finish-connecting notice is a Calendar banner, and not a success", async ({ page }) => {
-    // Linking.openURL would leave the test page, so stub the new-tab open.
-    // The app code awaits it and then posts the notice, which is what runs.
+    // This test asserts which banner a calendar notice renders in, not how the
+    // browser is launched.
     //
-    // Linking.openURL is not window.open. Depending on the build,
-    // react-native-web assigns window.location.href, which navigates the test
-    // frame away so the notice is never rendered. Stubbing only window.open
-    // worked locally against system Chrome and failed on CI's bundled Chromium,
-    // which is what this now covers.
+    // Three attempts to stub the navigation all failed on CI while passing
+    // locally, because system Chrome tolerates what bundled Chromium does not:
+    // stubbing window.open made Linking.openURL reject, and replacing
+    // window.location dropped the origin the app reads to build return_to. Each
+    // broke something upstream of the assertion, so each failed on a missing
+    // message instead of on the banner under test.
+    //
+    // Nothing is stubbed. The popup is allowed, Playwright does not follow it,
+    // and the test page keeps its own context.
     await page.addInitScript(() => {
-      const w = window as unknown as { open: unknown };
-      w.open = () => null;
-      try {
-        Object.defineProperty(window, "location", {
-          configurable: true,
-          get: () => ({ href: "", assign: () => undefined, replace: () => undefined }),
-          set: () => undefined,
-        });
-      } catch {
-        // Not configurable here; window.open plus the fulfilled route below is
-        // the fallback.
-      }
+      void 0;
     });
-    // Backstop in case the browser ignores both stubs. Fulfilled rather than
-    // aborted on purpose: an aborted navigation raises a network error, and this
-    // suite fails on any console error, so aborting would trade a flaky test for
-    // a reliably failing one.
+    // Consent page is served rather than left to the network, so the popup the
+    // app opens resolves to something instead of hanging or erroring. Playwright
+    // does not follow popups, so this does not affect the assertions below.
     await page.route("https://calendar.example.test/**", (route) =>
       route.fulfill({ status: 200, contentType: "text/html", body: "<html><body>consent</body></html>" }),
     );
