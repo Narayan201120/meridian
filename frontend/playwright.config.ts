@@ -70,7 +70,12 @@ export default defineConfig({
    * backend and lives in `playwright.demo.config.ts`; see that file for why the
    * two modes must not share a run.
    */
-  testMatch: /live-api\.spec\.ts$/,
+  /**
+   * Both live-data-path specs. `failure-paths.spec.ts` also needs the real
+   * backend, since it drives the app's handling of real failing responses
+   * rather than simulating them in the client.
+   */
+  testMatch: /(live-api|failure-paths)\.spec\.ts$/,
   /**
    * Serial by necessity, not by accident. Every spec shares one SQLite file and
    * one seeded user, so two specs creating tasks at once would interleave. If

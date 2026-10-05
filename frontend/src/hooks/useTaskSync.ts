@@ -10,6 +10,7 @@ import {
   type Task,
 } from "../lib/tasks";
 import type { AuthSession } from "../lib/auth";
+import { failureMessage, valueOr } from "../lib/loaded";
 
 // Retained as the reported delivery channel, and now actually true: the server
 // sweeps for due reminders on its own timer and pushes over Web Push. It was
@@ -63,26 +64,32 @@ export function useTaskSync(authSession: AuthSession | null, onError?: (m: strin
       setIsLoading(true);
       onError?.(null);
     }
-    try {
-      const nextTasks = await listTasks();
-      const dueNowCount = nextTasks.filter((task) => task.status === "due_now").length;
-      setDueNotice(
-        dueNowCount > 0
-          ? dueNowCount === 1
-            ? "1 task is due now."
-            : `${dueNowCount} tasks are due now.`
-          : null,
-      );
-      setTasks(nextTasks);
-      void loadRemindersForTasks(nextTasks);
-    } catch (error) {
+    const result = await listTasks();
+
+    if (result.kind === "failed") {
+      // Report it. The previous version caught the error here and, in demo mode
+      // or on a silent poll, told nobody at all, which is how a dispatch loop
+      // failing every 30 seconds stayed invisible.
       if (!silent) {
-        onError?.(describeTaskError(error));
+        onError?.(failureMessage(result) ?? "Could not load tasks.");
       }
-    } finally {
-      if (!silent) {
-        setIsLoading(false);
-      }
+      return;
+    }
+
+    const nextTasks = valueOr(result, []);
+    const dueNowCount = nextTasks.filter((task) => task.status === "due_now").length;
+    setDueNotice(
+      dueNowCount > 0
+        ? dueNowCount === 1
+          ? "1 task is due now."
+          : `${dueNowCount} tasks are due now.`
+        : null,
+    );
+    setTasks(nextTasks);
+    void loadRemindersForTasks(nextTasks);
+
+    if (!silent) {
+      setIsLoading(false);
     }
   }
 
@@ -117,15 +124,16 @@ export function useTaskSync(authSession: AuthSession | null, onError?: (m: strin
     // reminder twice. Its whole job is to keep the list matching what the
     // server believes, rather than guessing locally.
     const refreshPending = async () => {
-      try {
-        // Only genuinely undelivered reminders. The old filter also matched
-        // "sent", which put reminders the user had already received into a card
-        // titled "waiting for delivery".
-        setPendingReminders(await listAllReminders("pending"));
-      } catch {
+      const result = await listAllReminders("pending");
+      // Only genuinely undelivered reminders. The old filter also matched
+      // "sent", which put reminders the user had already received into a card
+      // titled "waiting for delivery".
+      if (result.kind === "failed") {
         // Keep the last known list. Clearing it would assert "you have nothing
         // waiting", which is a claim a failed request cannot support.
+        return;
       }
+      setPendingReminders(valueOr(result, []));
     };
 
     void refreshPending();

@@ -1,8 +1,9 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { getCurrentSession, type AuthSession } from "../lib/auth";
-import { listTasks, tasksRuntime, type Task } from "../lib/tasks";
+import { listAllReminders, listTasks, tasksRuntime, type Task } from "../lib/tasks";
 import { listReminders, type Reminder } from "../lib/tasks";
 import { getCalendarStatus } from "../lib/tasks";
+import { failureMessage, valueOr } from "../lib/loaded";
 
 type TasksContextValue = {
   tasks: Task[];
@@ -11,6 +12,8 @@ type TasksContextValue = {
   isLoading: boolean;
   errorMessage: string | null;
   setErrorMessage: (m: string | null) => void;
+  /** True when `tasks` holds cached data because the most recent read failed. */
+  isStale: boolean;
   calendarStatus: string | null;
   remindersByTask: Record<string, Reminder[]>;
   pendingReminders: Reminder[];
@@ -26,6 +29,8 @@ export function TasksProvider({ children }: { children: React.ReactNode }) {
   const [authSession, setAuthSession] = useState<AuthSession | null>(() => getCurrentSession());
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  /** True when `tasks` is showing cached data because the last read failed. */
+  const [isStale, setIsStale] = useState(false);
   const [calendarStatus, setCalendarStatus] = useState<string | null>(null);
   const [remindersByTask, setRemindersByTask] = useState<Record<string, Reminder[]>>({});
   const [pendingReminders, setPendingReminders] = useState<Reminder[]>([]);
@@ -64,23 +69,37 @@ export function TasksProvider({ children }: { children: React.ReactNode }) {
     }
     setIsLoading(true);
     setErrorMessage(null);
-    try {
-      const nextTasks = await listTasks();
-      setTasks(nextTasks);
-      void loadRemindersForTasks(nextTasks);
-      // also refresh pending dispatch list
-      if (tasksRuntime.isApiMode && authSession) {
-        try {
-          const { listAllReminders } = await import("../lib/tasks");
-          const all = await listAllReminders("pending");
-          setPendingReminders(all.slice(0, 5));
-        } catch {}
+
+    const result = await listTasks();
+
+    // Match on the union rather than catching an exception. A failure here
+    // leaves the previous list alone and says why, which is the whole point:
+    // setting tasks to [] on failure is what made a 500 render as "Inbox is
+    // clear", a confident statement the server never made.
+    if (result.kind === "failed") {
+      setErrorMessage(failureMessage(result) ?? "Could not load tasks.");
+      if (result.stale) {
+        // Real data is being shown, just old. Label it rather than pretend.
+        setIsStale(true);
       }
-    } catch (e: any) {
-      setErrorMessage(e?.message ?? String(e));
-    } finally {
-      setIsLoading(false);
+    } else {
+      setTasks(valueOr(result, []));
+      setIsStale(false);
+      void loadRemindersForTasks(valueOr(result, []));
     }
+
+    if (tasksRuntime.isApiMode && authSession) {
+      const reminders = await listAllReminders("pending");
+      if (reminders.kind === "failed") {
+        // Leave the last known list. Clearing it here asserts "you have nothing
+        // waiting", which is not something a failed request can support.
+        if (reminders.authExpired) setErrorMessage(failureMessage(reminders));
+      } else {
+        setPendingReminders(valueOr(reminders, []));
+      }
+    }
+
+    setIsLoading(false);
   }, [authSession, loadRemindersForTasks]);
 
   useEffect(() => {
@@ -123,7 +142,7 @@ export function TasksProvider({ children }: { children: React.ReactNode }) {
   }, [authSession]);
 
   return (
-    <TasksContext.Provider value={{ tasks, authSession, setAuthSession, isLoading, errorMessage, setErrorMessage, calendarStatus, remindersByTask, pendingReminders, refresh, setTasks, refreshRemindersForTask }}>
+    <TasksContext.Provider value={{ tasks, authSession, setAuthSession, isLoading, errorMessage, setErrorMessage, isStale, calendarStatus, remindersByTask, pendingReminders, refresh, setTasks, refreshRemindersForTask }}>
       {children}
     </TasksContext.Provider>
   );

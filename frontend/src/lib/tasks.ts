@@ -1,6 +1,7 @@
 import { Platform } from "react-native";
 
 import { authRuntime, getAccessToken } from "./auth";
+import { type Loaded, failed, loadedOrEmpty } from "./loaded";
 
 export type TaskStatus = "inbox" | "scheduled" | "due_now" | "completed" | "archived";
 export type TaskPriority = "low" | "medium" | "high";
@@ -277,9 +278,25 @@ export function buildApiHeaders(contentType?: string): HeadersInit {
   };
 }
 
-export async function listTasks(): Promise<Task[]> {
+/**
+ * Returns a `Loaded` rather than throwing, because "we could not load your
+ * tasks" and "you have no tasks" are different facts and this used to be the
+ * one place that could not tell them apart.
+ *
+ * The old version caught every error and returned the WatermelonDB cache if it
+ * had anything. A 401 from an expired session therefore produced a complete,
+ * plausible-looking task list and no error anywhere, which is how a dead
+ * session came to look like a working app.
+ *
+ * Stale data is still better than nothing on a flaky connection, so a network
+ * failure falls back to the cache. But it is labelled `failed`, never `ok` and
+ * never `empty`, so a caller can show it as degraded instead of pretending. A
+ * 401 never falls back: cached data cannot fix an expired session, and showing
+ * it is exactly the lie being fixed here.
+ */
+export async function listTasks(): Promise<Loaded<Task[]>> {
   if (!tasksRuntime.isApiMode) {
-    return demoTasks;
+    return loadedOrEmpty(demoTasks);
   }
 
   try {
@@ -288,29 +305,41 @@ export async function listTasks(): Promise<Task[]> {
     });
 
     if (!response.ok) {
-      throw new Error(`Failed to load tasks (${response.status})`);
+      return failed(`Failed to load tasks (${response.status})`, response.status);
     }
 
     const payload = (await response.json()) as Task[];
     const normalized = payload.map(normalizeTask);
     void cacheTasks(normalized);
-    return normalized;
+    return loadedOrEmpty(normalized);
   } catch (error) {
+    // A thrown fetch means the request never completed, so there is no status.
+    // Only that case is worth papering over with stale data.
     const cached = await getCachedTasks();
-    if (cached && cached.length > 0) return cached;
-    throw error;
+    if (cached && cached.length > 0) {
+      return {
+        kind: "failed",
+        reason: "Showing saved tasks. Could not reach the server.",
+        status: null,
+        authExpired: false,
+        stale: true,
+      };
+    }
+    return failed(error instanceof Error ? error.message : String(error), null);
   }
 }
 
-export async function syncTasksFromMutations(since?: string): Promise<Task[]> {
-  if (!tasksRuntime.isApiMode) return [];
+export async function syncTasksFromMutations(since?: string): Promise<Loaded<Task[]>> {
+  if (!tasksRuntime.isApiMode) return { kind: "empty" };
   const url = since ? `${tasksRuntime.apiBaseUrl}/tasks/mutations?since=${encodeURIComponent(since)}` : `${tasksRuntime.apiBaseUrl}/tasks/mutations`;
   const response = await fetch(url, { headers: buildApiHeaders() });
   if (!response.ok) {
     const detail = await readErrorDetail(response);
     throw new Error(detail || `Failed to sync mutations (${response.status})`);
   }
-  // For lean, just re-fetch tasks after mutations
+  // For lean, just re-fetch tasks after mutations. Returns whatever `listTasks`
+  // returns, `Loaded` included, so a failure to re-read cannot be mistaken for
+  // "no changes".
   return listTasks();
 }
 
@@ -783,15 +812,27 @@ export async function acknowledgeReminder(reminderId: string): Promise<Reminder>
   return (await response.json()) as Reminder;
 }
 
-export async function listAllReminders(status?: string): Promise<Reminder[]> {
-  if (!tasksRuntime.isApiMode) return [];
+/**
+ * Returns a `Loaded` so a failed read cannot be mistaken for "no reminders".
+ *
+ * That mistake was not hypothetical: `loadRemindersForTasks` caught every error
+ * and returned an empty map, and the task card then told the user "No reminder
+ * yet, will remind at scheduled time" on the strength of a request that had
+ * failed. A confident promise about the future, derived from a 500.
+ */
+export async function listAllReminders(status?: string): Promise<Loaded<Reminder[]>> {
+  if (!tasksRuntime.isApiMode) return { kind: "empty" };
   const url = status ? `${tasksRuntime.apiBaseUrl}/tasks/reminders/list?status_filter=${status}` : `${tasksRuntime.apiBaseUrl}/tasks/reminders/list`;
-  const response = await fetch(url, { headers: buildApiHeaders() });
-  if (!response.ok) {
-    const detail = await readErrorDetail(response);
-    throw new Error(detail || `Failed to list reminders (${response.status})`);
+  try {
+    const response = await fetch(url, { headers: buildApiHeaders() });
+    if (!response.ok) {
+      const detail = await readErrorDetail(response);
+      return failed(detail || `Failed to list reminders (${response.status})`, response.status);
+    }
+    return loadedOrEmpty((await response.json()) as Reminder[]);
+  } catch (error) {
+    return failed(error instanceof Error ? error.message : String(error), null);
   }
-  return (await response.json()) as Reminder[];
 }
 
 export type VoiceCaptureResponse = {

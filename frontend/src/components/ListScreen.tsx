@@ -12,6 +12,7 @@ export function ListScreen({
   emptyBody,
   isLoading,
   tasks,
+  loadFailed = false,
   renderCard,
 }: {
   eyebrow: string;
@@ -21,6 +22,13 @@ export function ListScreen({
   emptyBody: string;
   isLoading: boolean;
   tasks: Task[];
+  /**
+   * Whether the last read failed. Without this the screen can only branch on
+   * `tasks.length`, and an empty array produced by a 500 is indistinguishable
+   * from a genuinely empty list, so a failed load rendered as a cheerful
+   * "Inbox is clear".
+   */
+  loadFailed?: boolean;
   renderCard: (t: Task) => React.ReactNode;
 }) {
   return (
@@ -39,6 +47,15 @@ export function ListScreen({
                 <View className="h-3 rounded-full bg-borderfaint w-1/2" />
               </View>
             ))}
+          </View>
+        ) : loadFailed ? (
+          // Say what happened. An empty-state card here would be a statement
+          // about the user's data that nobody has actually made.
+          <View className="bg-sandbg dark:bg-nightcard rounded-2xl p-6 border border-sandborder dark:border-nightborder gap-1">
+            <Text className="text-ink dark:text-nighttext text-[16px] font-bold">Could not load {title.toLowerCase()}</Text>
+            <Text className="text-sandtext dark:text-nightmuted text-[14px] leading-5">
+              The last attempt failed, so this list may be out of date. Try again in a moment.
+            </Text>
           </View>
         ) : tasks.length === 0 ? (
           <View className="bg-sandbg dark:bg-nightcard rounded-2xl p-6 border border-sandborder dark:border-nightborder gap-1">
