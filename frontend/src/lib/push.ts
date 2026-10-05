@@ -115,9 +115,30 @@ export async function disablePush(): Promise<void> {
   const devices = await fetch(`${tasksRuntime.apiBaseUrl}/devices`, {
     headers: buildApiHeaders(),
   });
-  if (devices.ok) {
-    const rows = (await devices.json()) as { id: string; has_push_token: boolean }[];
-    await Promise.all(rows.filter((r) => r.has_push_token).map((r) => fetch(`${tasksRuntime.apiBaseUrl}/devices/${r.id}`, { method: "DELETE", headers: buildApiHeaders() })));
+  if (!devices.ok) {
+    // The server would not even say which devices hold push tokens, so
+    // nothing was deleted. Throw before touching the local subscription: the
+    // browser stays subscribed, the UI keeps offering "Turn off reminders",
+    // and the user can retry instead of reading a success that never happened.
+    throw new Error(`Could not turn off reminders (server said ${devices.status}). They may still be on.`);
+  }
+  const rows = (await devices.json()) as { id: string; has_push_token: boolean }[];
+  const targets = rows.filter((r) => r.has_push_token);
+  const results = await Promise.all(
+    targets.map((r) => fetch(`${tasksRuntime.apiBaseUrl}/devices/${r.id}`, { method: "DELETE", headers: buildApiHeaders() })),
+  );
+  const failed = results.filter((r) => !r.ok);
+  if (failed.length > 0) {
+    // Same rule: report the failure and leave the local subscription alone.
+    // Unsubscribing here would stop this browser while the surviving Device
+    // rows kept the server sweeping reminders at a dead endpoint.
+    const status = failed[0]?.status ?? "unknown";
+    if (failed.length === targets.length) {
+      throw new Error(`Could not turn off reminders (server said ${status}). They may still be on.`);
+    }
+    throw new Error(
+      `Reminders were only partly turned off (${targets.length - failed.length} of ${targets.length} devices removed; server said ${status}). The rest may still be on.`,
+    );
   }
   const registration = await navigator.serviceWorker.ready;
   const existing = await registration.pushManager.getSubscription();
