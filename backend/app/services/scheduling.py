@@ -555,6 +555,14 @@ class SchedulingService:
 
         Idempotent: cancelling an already-canceled block returns it untouched
         rather than issuing a second delete.
+
+        If Google refuses the delete, the block is left confirmed on purpose
+        and the error propagates: the task stays scheduled so it still agrees
+        with the event on the real calendar, and the user can retry. Cancelling
+        locally anyway would strand the event with no path back, because a
+        canceled block short-circuits as idempotent and confirm-after-cancel
+        is rejected. (Google 404/410 never reach the failure branch:
+        delete treats an already-gone event as success.)
         """
         block = await self.session.scalar(
             select(TaskCalendarBlock).where(
@@ -569,20 +577,22 @@ class SchedulingService:
             return block
 
         external_id = self._external_event_id(block)
-        delete_error: str | None = None
         if external_id is not None:
             try:
                 await self.calendar.delete_calendar_event(user_id, external_id)
             except HTTPException as exc:
-                # The user's intent to cancel is honoured locally regardless. If
-                # Google refused, keep the event link and record why, so the
-                # orphan can be retried instead of being forgotten.
-                delete_error = str(exc.detail)[:500]
+                # Keep them in agreement: leave the block confirmed so the task
+                # stays scheduled and matches the real calendar. Record why so
+                # the UI can surface it, then re-raise so the caller sees an
+                # error and the user can retry.
+                block.last_error_message = str(exc.detail)[:500]
+                await self.session.commit()
+                await self.session.refresh(block)
+                raise
 
-        if delete_error is None:
-            block.calendar_event_id = None
+        block.calendar_event_id = None
         block.status = TaskCalendarBlockStatus.CANCELED
-        block.last_error_message = delete_error
+        block.last_error_message = None
         await self.session.commit()
         await self.session.refresh(block)
 
@@ -716,19 +726,25 @@ class SchedulingService:
         # retried (the due sweep only reads PENDING rows) and stop being listed
         # as pending. A reminder that was never delivered must not become SENT:
         # SENT means a device actually accepted it, and conflating "seen and
-        # dismissed" with "delivered" would lie about what happened. ReminderStatus
-        # has no ACKNOWLEDGED value, and adding one needs a Postgres enum
-        # migration, so an undelivered reminder settles to CANCELED -- the
-        # existing terminal "no further attempts" state, still distinct from SENT.
-        # A reminder that did reach a device keeps its honest SENT status.
-        # Delivery rows all settle to ACKNOWLEDGED (that enum already has the
-        # value); leaving PENDING attempts under an acknowledged reminder would
-        # imply work still outstanding that will never happen.
+        # dismissed" with "delivered" would lie about what happened.
+        #
+        # ACKNOWLEDGED, not CANCELED. CANCELED means withdrawn because the task
+        # changed, which is a different event with a different cause, and sharing
+        # it made "the user dismissed this" indistinguishable from "we pulled it
+        # because the block was cancelled". The enum value and the migration live
+        # in app/models/calendar_connection.py and supabase/migrations/.
+        #
+        # A reminder that did reach a device keeps SENT, so delivered and dismissed
+        # remain distinguishable in the data as well as in the UI.
+        #
+        # Delivery rows all settle to ACKNOWLEDGED; leaving PENDING attempts under
+        # an acknowledged reminder would imply work still outstanding that will
+        # never happen.
         deliveries = await self.session.scalars(select(NotificationDelivery).where(NotificationDelivery.reminder_id == reminder_id, NotificationDelivery.user_id == user_id))
         for d in deliveries.all():
             d.status = NotificationDeliveryStatus.ACKNOWLEDGED
         if reminder.status != ReminderStatus.SENT:
-            reminder.status = ReminderStatus.CANCELED
+            reminder.status = ReminderStatus.ACKNOWLEDGED
         await self.session.commit()
         await self.session.refresh(reminder)
         return reminder

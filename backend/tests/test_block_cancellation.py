@@ -189,11 +189,15 @@ class TestCancelWithdrawsGoogleEvent:
         assert resp.status_code == 200, resp.text
         assert mock_delete.await_count == 0
 
-    async def test_google_delete_failure_still_cancels_locally(self, client, db_session):
-        """A dead Google connection must not strand the block as confirmed.
+    async def test_google_delete_failure_leaves_block_confirmed(self, client, db_session):
+        """Google refusing the delete must not unschedule anything.
 
-        The local cancel is the source of truth for the user's intent; the event
-        we could not delete is recorded so it is not silently forgotten.
+        The block stays confirmed so the task and the real calendar still
+        agree, the failure reason is recorded for the UI, and a retry after
+        Google recovers cancels cleanly. Cancelling locally on a failed
+        delete would strand the event on the calendar with no path back:
+        a canceled block short-circuits as idempotent and confirm-after-cancel
+        is rejected, so the orphan could never be retried.
         """
         from fastapi import HTTPException
 
@@ -204,11 +208,30 @@ class TestCancelWithdrawsGoogleEvent:
             side_effect=HTTPException(status_code=502, detail="Google Calendar delete failed"),
         ):
             resp = await client.post(f"/api/v1/tasks/{task_id}/blocks/{block_id}/cancel")
-        assert resp.status_code == 200, resp.text
-        body = resp.json()
-        assert body["status"] == "canceled"
-        assert body["calendar_event_id"] is not None, "keep the link so the orphan can be retried"
-        assert body["last_error_message"], "failure to delete must be recorded, not swallowed"
+        assert resp.status_code == 502, resp.text
+
+        blocks = await client.get(f"/api/v1/tasks/{task_id}/blocks")
+        assert blocks.status_code == 200, blocks.text
+        body = next(b for b in blocks.json() if b["id"] == block_id)
+        assert body["status"] == "confirmed", "block must stay confirmed so task and calendar still agree"
+        assert body["calendar_event_id"] is not None, "keep the link so a retry deletes the right event"
+        assert body["last_error_message"], "failure reason must be recorded for the UI to surface"
+
+        task_resp = await client.get(f"/api/v1/tasks/{task_id}")
+        assert task_resp.status_code == 200, task_resp.text
+        assert task_resp.json()["status"] == "scheduled", "task must stay scheduled while the event still exists"
+
+        after = await _reminders(client, task_id)
+        assert after["scheduled_block"] == "pending", "reminders must survive a cancel that did not happen"
+        assert after["due_date"] == "pending"
+
+        # The retry path design (B) exists to preserve: once Google recovers,
+        # the same cancel succeeds.
+        with patch("app.services.google_calendar.GoogleCalendarService.delete_calendar_event", new_callable=AsyncMock):
+            retry = await client.post(f"/api/v1/tasks/{task_id}/blocks/{block_id}/cancel")
+        assert retry.status_code == 200, retry.text
+        assert retry.json()["status"] == "canceled"
+        assert retry.json()["last_error_message"] is None
 
     async def test_cancel_unknown_block_returns_404(self, client):
         resp = await client.post(f"/api/v1/tasks/{UUID(int=0)}/blocks/{UUID(int=0)}/cancel")

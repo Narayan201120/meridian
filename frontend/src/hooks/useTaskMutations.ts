@@ -1,4 +1,6 @@
 import { useState } from "react";
+
+import { valueOr } from "../lib/loaded";
 import {
   cancelTaskCalendarBlock,
   confirmTaskCalendarBlock,
@@ -12,7 +14,6 @@ import {
   updateTask,
   type SuggestedBlock,
   type Task,
-  type TaskCalendarBlock,
 } from "../lib/tasks";
 
 export type TaskAction = "complete" | "reopen" | "delete" | "schedule" | "unschedule" | "edit" | "suggest" | null;
@@ -225,26 +226,27 @@ export function useTaskMutations(deps: UseTaskMutationsDeps) {
   /**
    * Cancel every block that actually reached Google.
    *
-   * Only confirmed blocks own a calendar event. If Google refuses, the error is
-   * surfaced and the block is left confirmed on purpose: the task stays scheduled
-   * so the event and the task still agree, and the user can retry.
+   * Only confirmed blocks own a calendar event. If listing blocks fails, the
+   * error propagates and the task is left scheduled: unscheduling blind would
+   * strand an event on the real calendar. If Google refuses a delete, the
+   * backend leaves that block confirmed and returns an error, which also
+   * propagates so the task stays scheduled and matches the calendar, and the
+   * user can retry. A 200 with a last_error_message is treated the same way,
+   * so a future contract change cannot silently diverge again.
    */
   async function cancelConfirmedBlocks(task: Task) {
     if (!tasksRuntime.isApiMode) {
       return;
     }
-    let blocks: TaskCalendarBlock[];
-    try {
-      blocks = await listTaskCalendarBlocks(task.id);
-    } catch {
-      // Listing is best effort; unscheduling the task still matters more.
-      return;
-    }
+    const blocks = await listTaskCalendarBlocks(task.id);
     for (const block of blocks) {
       if (block.status !== "confirmed") {
         continue;
       }
-      await cancelTaskCalendarBlock(task.id, block.id);
+      const result = await cancelTaskCalendarBlock(task.id, block.id);
+      if (result.last_error_message) {
+        throw new Error(result.last_error_message);
+      }
     }
   }
 
@@ -289,7 +291,11 @@ export function useTaskMutations(deps: UseTaskMutationsDeps) {
           const created = await createTaskCalendarBlock(task.id, block);
           await confirmTaskCalendarBlock(task.id, created.id);
           const refreshed = await listTasks();
-          const updated = refreshed.find((t) => t.id === task.id);
+          // A failed read here falls through to the PATCH fallback below, which
+          // is fine: the block was already confirmed, so we know the new status
+          // either way. Treating "could not read" as "no such task" is what
+          // would be wrong here, and `valueOr` keeps that distinction.
+          const updated = valueOr(refreshed, []).find((t) => t.id === task.id);
           if (updated) replaceTask(updated);
           else {
             const nextTask = await updateTask(task.id, { status: "scheduled", due_at: block.suggested_start_at });

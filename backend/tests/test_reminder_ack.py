@@ -49,12 +49,27 @@ class TestAckPersists:
 
         resp = await client.post(f"/api/v1/tasks/reminders/{reminder.id}/ack")
         assert resp.status_code == 200, resp.text
-        assert resp.json()["status"] != ReminderStatus.PENDING.value
+        assert resp.json()["status"] == ReminderStatus.ACKNOWLEDGED.value
 
         # A re-read must agree: not pending in the DB and not in the pending list.
         await db_session.refresh(reminder)
-        assert reminder.status != ReminderStatus.PENDING
+        assert reminder.status == ReminderStatus.ACKNOWLEDGED
         assert str(reminder.id) not in await _pending_ids(client)
+
+    @pytest.mark.asyncio
+    async def test_ack_is_distinguishable_from_cancellation(self, client, db_session, auth_user_id):
+        """"Dismissed" and "withdrawn" are different events and must not share a value.
+
+        Settling ack to CANCELED made a user dismissing a reminder look identical
+        to the block being cancelled underneath it, so the app could not tell the
+        user which had happened.
+        """
+        reminder = await _seed_reminder(db_session, UUID(auth_user_id))
+
+        ack = await client.post(f"/api/v1/tasks/reminders/{reminder.id}/ack")
+        assert ack.status_code == 200, ack.text
+        assert ack.json()["status"] != ReminderStatus.CANCELED.value, "dismissed must not read as withdrawn"
+        assert ack.json()["status"] != ReminderStatus.SENT.value, "dismissed must not read as delivered"
 
     @pytest.mark.asyncio
     async def test_acked_pending_reminder_is_not_redispatched(self, client, db_session, auth_user_id):
