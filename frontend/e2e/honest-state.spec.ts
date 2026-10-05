@@ -170,9 +170,18 @@ test.describe("calendar notices get their own banner, not the Reminders one", ()
   test("the finish-connecting notice is a Calendar banner, and not a success", async ({ page }) => {
     // Linking.openURL would leave the test page, so stub the new-tab open.
     // The app code awaits it and then posts the notice, which is what runs.
+    //
+    // Returns null, and also swallows location assignment, because
+    // react-native-web's Linking.openURL reaches window.open on some builds and
+    // navigates the current frame on others. A bare `open = () => null` was
+    // enough locally against system Chrome but let the frame navigate on CI's
+    // bundled Chromium, which then never rendered the notice at all.
     await page.addInitScript(() => {
       (window as unknown as { open: unknown }).open = () => null;
     });
+    // Block the consent URL itself, so neither open path can navigate this frame
+    // away even if the browser ignores the window.open stub.
+    await page.route("https://calendar.example.test/**", (route) => route.abort());
     await ensureSignedIn(page);
 
     await page.route("**/api/v1/calendar/google/authorize", async (route) =>
