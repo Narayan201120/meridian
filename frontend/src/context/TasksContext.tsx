@@ -17,6 +17,12 @@ type TasksContextValue = {
   calendarStatus: string | null;
   remindersByTask: Record<string, Reminder[]>;
   pendingReminders: Reminder[];
+  /**
+   * Exposed so an optimistic ack can drop a row the server has already settled.
+   * Without it the only way to acknowledge is to refetch, which makes the row
+   * jump back if the request failed.
+   */
+  setPendingReminders: React.Dispatch<React.SetStateAction<Reminder[]>>;
   refresh: () => Promise<void>;
   setTasks: React.Dispatch<React.SetStateAction<Task[]>>;
   refreshRemindersForTask: (taskId: string) => Promise<void>;
@@ -142,7 +148,7 @@ export function TasksProvider({ children }: { children: React.ReactNode }) {
   }, [authSession]);
 
   return (
-    <TasksContext.Provider value={{ tasks, authSession, setAuthSession, isLoading, errorMessage, setErrorMessage, isStale, calendarStatus, remindersByTask, pendingReminders, refresh, setTasks, refreshRemindersForTask }}>
+    <TasksContext.Provider value={{ tasks, authSession, setAuthSession, isLoading, errorMessage, setErrorMessage, isStale, calendarStatus, remindersByTask, pendingReminders, setPendingReminders, refresh, setTasks, refreshRemindersForTask }}>
       {children}
     </TasksContext.Provider>
   );
