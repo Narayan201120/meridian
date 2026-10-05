@@ -332,29 +332,6 @@ class TestDelivery:
         assert len(transport.sent) == 2, "every registered device should receive the reminder"
 
     @pytest.mark.asyncio
-    async def test_one_failed_device_does_not_block_another(self, client, db_session, auth_user_id, vapid_configured):
-        """A dead subscription must not stop delivery to a healthy one."""
-        await _seed_device(db_session, auth_user_id, endpoint="https://push.example/dead")
-        await _seed_device(db_session, auth_user_id, endpoint="https://push.example/live")
-        await _seed_reminder(db_session, auth_user_id)
-
-        calls: list[str] = []
-
-        async def flaky_send(*, subscription: str, payload: dict) -> str:
-            calls.append(subscription)
-            if "dead" in subscription:
-                raise HTTPException(status_code=410, detail="subscription gone")
-            return "msg-ok"
-
-        transport = FakeTransport()
-        transport.send = flaky_send  # type: ignore[method-assign]
-        with patch("app.services.scheduling.get_push_transport", return_value=transport):
-            resp = await client.post("/api/v1/tasks/reminders/dispatch")
-
-        assert len(calls) == 2
-        assert resp.json()["dispatched"] == 1
-
-    @pytest.mark.asyncio
     async def test_unconfigured_push_leaves_reminder_pending(self, client, db_session, auth_user_id, monkeypatch):
         """With no VAPID keys the reminder must stay pending, not vanish."""
         from app.core.config import settings

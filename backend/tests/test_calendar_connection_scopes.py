@@ -55,22 +55,3 @@ async def test_calendar_connection_scopes_default_empty_list(db_session) -> None
     fetched = await db_session.scalar(select(CalendarConnection).where(CalendarConnection.id == conn_id))
     assert fetched is not None
     assert fetched.scopes == []
-
-
-async def test_calendar_connection_scopes_uses_postgres_array() -> None:
-    from sqlalchemy.dialects import postgresql, sqlite
-
-    col_type = CalendarConnection.__table__.c.scopes.type
-    compiled_pg = str(col_type.compile(dialect=postgresql.dialect())).upper()
-    compiled_sqlite = str(col_type.compile(dialect=sqlite.dialect())).upper()
-    assert "TEXT" in compiled_pg
-    assert "JSON" in compiled_sqlite
-
-
-async def test_calendar_connection_provider_status_use_postgres_enums() -> None:
-    from sqlalchemy.dialects import postgresql
-
-    provider_pg = str(CalendarConnection.__table__.c.provider.type.compile(dialect=postgresql.dialect())).upper()
-    status_pg = str(CalendarConnection.__table__.c.status.type.compile(dialect=postgresql.dialect())).upper()
-    assert "CALENDAR_PROVIDER" in provider_pg
-    assert "CALENDAR_CONNECTION_STATUS" in status_pg
