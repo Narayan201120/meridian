@@ -343,3 +343,13 @@ async def test_voice_capture_never_creates_calendar_block(client: AsyncClient, d
 
     blocks = await db_session.scalars(select(TaskCalendarBlock).where(TaskCalendarBlock.task_id == UUID(task_id)))
     assert len(list(blocks.all())) == 0
+    # The old version of this test stopped here, which made it unfalsifiable:
+    # nothing in the capture path creates blocks, so `== 0` held against any
+    # version of the code, including a broken one that did create them by some
+    # other route. What actually matters is that capture SUCCEEDS and that
+    # scheduling stays a separate explicit step. Asserting a real 200 plus a
+    # created task means this fails if the capture path breaks, while still
+    # pinning that nothing was scheduled behind the user's back.
+    assert task_id is not None, "voice capture should still create a task"
+    task = await db_session.get(Task, UUID(task_id))
+    assert task is not None
