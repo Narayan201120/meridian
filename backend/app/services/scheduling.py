@@ -439,8 +439,6 @@ class SchedulingService:
                 task.status = TaskStatus.DUE_NOW
             else:
                 task.status = TaskStatus.SCHEDULED
-            if task.status == TaskStatus.COMPLETED:
-                task.completed_at = task.completed_at or datetime.now(timezone.utc)
         await self.session.commit()
         await self.session.refresh(task)
 

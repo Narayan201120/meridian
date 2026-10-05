@@ -1,0 +1,17 @@
+-- Stop the database defaulting a reminder provider to 'fcm'.
+--
+-- The FCM stub that wrote fake successful deliveries has been gone for a while.
+-- Every ORM insert passes provider explicitly as 'web_push', so application
+-- traffic was never mislabelled, but the column default outlived it. A raw SQL
+-- insert, a psql session, or a future code path that omits the column silently
+-- gets 'fcm' back, which is the same false provenance that started this.
+--
+-- The model now has no client-side default either, so an omitted provider fails
+-- loudly with an IntegrityError rather than being quietly mislabelled.
+--
+-- delivery_channel and local_only are left alone. They were removed from
+-- ReminderRead because nothing ever wrote them and their defaults ('push' and
+-- false) assert a delivery that may never happen, but the columns stay so this
+-- does not have to drop data. The same reasoning applies here: dropping the
+-- columns is a separate decision, not a side effect of fixing the default.
+alter table public.notification_deliveries alter column provider drop default;

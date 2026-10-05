@@ -56,8 +56,6 @@ def test_acknowledged_round_trips_through_reminder_read() -> None:
         type="due_date",
         scheduled_for=now,
         status=ReminderStatus.ACKNOWLEDGED.value,
-        delivery_channel="push",
-        local_only=False,
         sent_at=None,
         last_error_message=None,
         created_at=now,

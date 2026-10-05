@@ -764,8 +764,11 @@ export type Reminder = {
   type: string;
   scheduled_for: string;
   status: string;
-  delivery_channel: string;
-  local_only: boolean;
+  // `delivery_channel` and `local_only` were removed from the API's
+  // ReminderRead. Nothing ever wrote them, their defaults claimed a push that
+  // might never happen, and per-attempt truth already lives on
+  // NotificationDelivery.provider. Declaring them here would only let a stale
+  // type suggest the server still sends them.
   sent_at: string | null;
   created_at: string;
   updated_at: string;
@@ -806,10 +809,12 @@ export async function acknowledgeReminder(reminderId: string): Promise<Reminder>
       task_calendar_block_id: null,
       type: "due_date",
       scheduled_for: new Date().toISOString(),
-      status: "sent",
-      delivery_channel: "push",
-      local_only: false,
-      sent_at: new Date().toISOString(),
+      // "acknowledged", not "sent". The server settles an undelivered reminder
+      // to acknowledged precisely because SENT means a device actually accepted
+      // it, and a demo fixture claiming "sent" for something that never went
+      // anywhere is the same lie in a smaller package.
+      status: "acknowledged",
+      sent_at: null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };

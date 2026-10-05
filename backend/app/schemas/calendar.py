@@ -73,8 +73,6 @@ class ReminderRead(BaseModel):
     type: str
     scheduled_for: datetime
     status: str
-    delivery_channel: str
-    local_only: bool
     sent_at: datetime | None
     last_error_message: str | None
     created_at: datetime

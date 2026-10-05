@@ -160,7 +160,11 @@ class NotificationDelivery(Base):
     user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
     reminder_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     device_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
-    provider: Mapped[str] = mapped_column(Text, nullable=False, default="fcm")
+    # No default on purpose: provenance must be passed explicitly at every
+    # insert site (currently WEB_PUSH_PROVIDER in notifications.deliver_reminder).
+    # A default here silently minted false provenance once before ("fcm"), and
+    # any default would do it again the moment a second provider appears.
+    provider: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[NotificationDeliveryStatus] = mapped_column(
         SqlEnum(NotificationDeliveryStatus, name="notification_delivery_status", native_enum=True, create_type=False, values_callable=_enum_values),
         nullable=False,
