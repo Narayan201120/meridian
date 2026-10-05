@@ -18,6 +18,7 @@ import base64
 import hashlib
 import hmac
 import os
+import pathlib
 import secrets
 import threading
 import time
@@ -318,6 +319,29 @@ async def list_deliveries() -> dict:
 async def _init_file_db() -> None:
     if settings.database_url is None:
         raise RuntimeError("MERIDIAN_DATABASE_URL must be set (e.g. sqlite+aiosqlite:///./e2e.db).")
+
+    # Start from an empty database every run.
+    #
+    # Tests seed devices with deliberately unresolvable push endpoints, so every
+    # one of them is retried by the due sweep on every pass forever. Nothing ever
+    # removed them, so a dirty e2e.db accumulated dead devices and delivery rows
+    # until the sweep spent its whole budget re-attempting sends for reminders no
+    # test cared about, and sign-ins stalled. Observed at 10 devices and 877
+    # delivery rows after a handful of runs.
+    #
+    # Dropped rather than truncated because this file is a scratch database by
+    # definition. Refusing to start when the URL is anything other than a local
+    # SQLite path, so this can never delete a real database.
+    url = settings.database_url
+    if url.startswith("sqlite") and ":memory:" not in url:
+        path = url.split("///", 1)[-1]
+        if path and path != ":memory:":
+            for suffix in ("", "-journal", "-wal", "-shm"):
+                candidate = pathlib.Path(path + suffix)
+                if candidate.exists():
+                    candidate.unlink()
+                    print(f"[e2e-server] removed stale {candidate.name}", flush=True)
+
     engine = create_async_engine(settings.database_url)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

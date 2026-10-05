@@ -191,7 +191,13 @@ test.describe("calendar notices get their own banner, not the Reminders one", ()
     );
     await ensureSignedIn(page);
 
-    await page.route("**/api/v1/calendar/google/authorize", async (route) =>
+    // Trailing glob is required. The app appends ?return_to=<origin>, and a glob
+// without a trailing wildcard matches the path only, so the route never fired
+    // and the request reached the real backend, which answered "Google Calendar
+    // OAuth is not configured". That surfaced as a missing notice rather than as
+    // an interception failure, which is why four earlier attempts at the popup
+    // were all fixing the wrong thing.
+    await page.route("**/api/v1/calendar/google/authorize**", async (route) =>
       route.fulfill({
         status: 200,
         contentType: "application/json",
