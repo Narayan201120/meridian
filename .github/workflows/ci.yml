@@ -21,16 +21,24 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# Pinned rather than `ubuntu-latest`, which migrates to Ubuntu 26 imminently.
-# An image change with no commit is exactly the kind of surprise this workflow
-# exists to catch, so it should not be the thing that introduces one.
 env:
-  RUNNER: ubuntu-24.04
+  # Use the bundled Chromium rather than system Chrome, which the
+  # playwright.config.ts default assumes for local machines where
+  # cdn.playwright.dev is unreachable.
+  E2E_BROWSER_CHANNEL: ""
 
 jobs:
   backend:
-    name: Backend tests and lint
-    runs-on: ${{ env.RUNNER }}
+    # Pinned rather than `ubuntu-latest`, which migrates to Ubuntu 26 imminently.
+    # An image change with no commit is exactly the kind of surprise this workflow
+    # exists to catch, so it should not be the thing that introduces one.
+    #
+    # Spelled out per job rather than hoisted into a workflow-level `env` entry.
+    # `runs-on` cannot read the `env` context, so `runs-on: ${{ env.RUNNER }}`
+    # makes the whole file fail to parse and every job silently never runs. That
+    # is what happened here, and it is the worst possible failure mode: a green
+    # local run and a red remote one with no job output to explain it.
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: backend
@@ -59,7 +67,7 @@ jobs:
 
   frontend:
     name: Frontend typecheck
-    runs-on: ${{ env.RUNNER }}
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: frontend
@@ -78,15 +86,10 @@ jobs:
 
   e2e:
     name: End-to-end
-    runs-on: ${{ env.RUNNER }}
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: frontend
-    env:
-      # Use the bundled Chromium rather than system Chrome, which the
-      # playwright.config.ts default assumes for local machines where
-      # cdn.playwright.dev is unreachable.
-      E2E_BROWSER_CHANNEL: ""
     steps:
       - uses: actions/checkout@v7
 
