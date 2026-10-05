@@ -3,7 +3,7 @@ from typing import Any
 
 import jwt
 from fastapi import HTTPException, status
-from jwt import InvalidTokenError, PyJWKClient
+from jwt import InvalidTokenError, PyJWKClient, PyJWKClientError, PyJWKError, PyJWKSetError
 
 from app.core.config import settings
 
@@ -36,7 +36,22 @@ def verify_supabase_jwt(token: str) -> dict[str, Any]:
             # request 401s. Leeway absorbs that drift.
             leeway=settings.supabase_jwt_leeway_seconds,
         )
+    except (PyJWKClientError, PyJWKSetError, PyJWKError) as exc:
+        # The key source failed, so the token was never actually evaluated. That
+        # is different from the token being bad and must not be reported as 401,
+        # which would sign the user out over a Supabase outage.
+        #
+        # Order matters and is not currently load-bearing: these three are
+        # siblings under PyJWTError, not a hierarchy, and none is a subclass of
+        # InvalidTokenError (verified against pyjwt 2.12.1). Catching the broad
+        # PyJWTError instead would also swallow InvalidTokenError and turn every
+        # bad token into a 503.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Auth service unavailable. Please retry.",
+        ) from exc
     except InvalidTokenError as exc:
+        # Key retrieval succeeded and the token itself failed validation.
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid bearer token.",

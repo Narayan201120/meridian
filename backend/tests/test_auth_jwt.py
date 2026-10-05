@@ -13,6 +13,8 @@ from typing import Any
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
+from fastapi import HTTPException
+from jwt import PyJWKClientError, PyJWKSetError
 
 from app.core import auth as auth_module
 from app.core.config import settings
@@ -141,3 +143,43 @@ def test_leeway_is_not_so_wide_that_expiry_is_ignored(
     auth_module.verify_supabase_jwt(token)
     assert settings.supabase_jwt_leeway_seconds < 3600
     assert time.time() > 0
+
+
+def _patch_jwks_failure(monkeypatch: pytest.MonkeyPatch, exc: Exception) -> None:
+    class FailingJWKClient:
+        def get_signing_key_from_jwt(self, token: str) -> Any:
+            raise exc
+
+    monkeypatch.setattr(auth_module, "get_jwks_client", lambda: FailingJWKClient())
+
+
+def test_unreachable_jwks_returns_503_not_500_or_401(
+    monkeypatch: pytest.MonkeyPatch, signing_key: rsa.RSAPrivateKey
+) -> None:
+    """Supabase unreachable (DNS failure, timeout): honest 503, not 500 or 401."""
+    _patch_jwks_failure(monkeypatch, PyJWKClientError("Unable to fetch JWKS"))
+    with pytest.raises(HTTPException) as excinfo:
+        auth_module.verify_supabase_jwt(_mint(signing_key))
+    assert excinfo.value.status_code == 503
+    assert "unavailable" in excinfo.value.detail.lower()
+
+
+def test_jwks_without_matching_kid_returns_503(
+    monkeypatch: pytest.MonkeyPatch, signing_key: rsa.RSAPrivateKey
+) -> None:
+    """Rotated keys / stale cache: valid JSON, no matching kid -> same 503."""
+    _patch_jwks_failure(monkeypatch, PyJWKSetError("Unable to find a signing key"))
+    with pytest.raises(HTTPException) as excinfo:
+        auth_module.verify_supabase_jwt(_mint(signing_key))
+    assert excinfo.value.status_code == 503
+    assert "unavailable" in excinfo.value.detail.lower()
+
+
+def test_wrong_issuer_still_returns_401(
+    monkeypatch: pytest.MonkeyPatch, signing_key: rsa.RSAPrivateKey
+) -> None:
+    """A bad token is 401, not 503: the key source worked, the token did not."""
+    _patch_jwks(monkeypatch, signing_key)
+    with pytest.raises(HTTPException) as excinfo:
+        auth_module.verify_supabase_jwt(_mint(signing_key, iss="https://evil.example.com/auth/v1"))
+    assert excinfo.value.status_code == 401

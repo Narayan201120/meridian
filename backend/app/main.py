@@ -31,6 +31,15 @@ async def _due_work_loop() -> None:
     that has nothing to do.
     """
     interval = max(1, settings.reminder_dispatch_interval_seconds)
+
+    # Give the schema a moment. The first pass runs immediately by design, and in
+    # a fresh environment that beat table creation, so the sweep logged a
+    # "no such table: reminders" traceback on every boot and only recovered
+    # because the loop swallows exceptions. The swallow is still correct, since a
+    # transient database failure must not kill the scheduler, but booting into a
+    # guaranteed exception is not a thing to leave in place.
+    await asyncio.sleep(min(interval, 2))
+
     while True:
         try:
             session_factory = get_session_factory()
