@@ -171,17 +171,32 @@ test.describe("calendar notices get their own banner, not the Reminders one", ()
     // Linking.openURL would leave the test page, so stub the new-tab open.
     // The app code awaits it and then posts the notice, which is what runs.
     //
-    // Returns null, and also swallows location assignment, because
-    // react-native-web's Linking.openURL reaches window.open on some builds and
-    // navigates the current frame on others. A bare `open = () => null` was
-    // enough locally against system Chrome but let the frame navigate on CI's
-    // bundled Chromium, which then never rendered the notice at all.
+    // Linking.openURL is not window.open. Depending on the build,
+    // react-native-web assigns window.location.href, which navigates the test
+    // frame away so the notice is never rendered. Stubbing only window.open
+    // worked locally against system Chrome and failed on CI's bundled Chromium,
+    // which is what this now covers.
     await page.addInitScript(() => {
-      (window as unknown as { open: unknown }).open = () => null;
+      const w = window as unknown as { open: unknown };
+      w.open = () => null;
+      try {
+        Object.defineProperty(window, "location", {
+          configurable: true,
+          get: () => ({ href: "", assign: () => undefined, replace: () => undefined }),
+          set: () => undefined,
+        });
+      } catch {
+        // Not configurable here; window.open plus the fulfilled route below is
+        // the fallback.
+      }
     });
-    // Block the consent URL itself, so neither open path can navigate this frame
-    // away even if the browser ignores the window.open stub.
-    await page.route("https://calendar.example.test/**", (route) => route.abort());
+    // Backstop in case the browser ignores both stubs. Fulfilled rather than
+    // aborted on purpose: an aborted navigation raises a network error, and this
+    // suite fails on any console error, so aborting would trade a flaky test for
+    // a reliably failing one.
+    await page.route("https://calendar.example.test/**", (route) =>
+      route.fulfill({ status: 200, contentType: "text/html", body: "<html><body>consent</body></html>" }),
+    );
     await ensureSignedIn(page);
 
     await page.route("**/api/v1/calendar/google/authorize", async (route) =>
