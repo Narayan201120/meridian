@@ -244,8 +244,9 @@ export async function signOut(): Promise<void> {
   const session = getCurrentSession();
 
   if (session !== null && authRuntime.isConfigured) {
+    let response: Response;
     try {
-      await fetch(`${authRuntime.supabaseUrl}/auth/v1/logout`, {
+      response = await fetch(`${authRuntime.supabaseUrl}/auth/v1/logout`, {
         method: "POST",
         headers: {
           apikey: authRuntime.publishableKey,
@@ -253,7 +254,17 @@ export async function signOut(): Promise<void> {
         },
       });
     } catch {
-      // Clear local auth state even if remote logout fails.
+      // The request never completed, so the server session is presumably still
+      // live. Keep the local session so the UI keeps saying signed in, which
+      // is the truth, and let the caller surface this instead of swallowing it.
+      throw new Error("Could not reach the server to sign out. You are still signed in — try again.");
+    }
+    if (!response.ok) {
+      // fetch resolves on a 500, so !ok must be checked explicitly: a rejected
+      // logout that still clears local state leaves the server session live
+      // while the UI claims to be signed out. Same deal as above — stay signed
+      // in and say so.
+      throw new Error(`Sign-out failed (${response.status}). You are still signed in — try again.`);
     }
   }
 

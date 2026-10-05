@@ -49,7 +49,12 @@ export default function HomeTab() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const { authSession, authEmail, setAuthEmail, authPassword, setAuthPassword, isSigningIn, isSigningOut, handleSignIn, handleSignOut } = useAuth(setErrorMessage);
   const { tasks, setTasks, isLoading, dueNotice, remindersByTask, pendingReminders, dispatchNotice, setDispatchNotice, setPendingReminders, loadTasks, refreshRemindersForTask, replaceTask } = useTaskSync(authSession, setErrorMessage);
-  const { calendarStatus, isSyncing, isConnecting, handleSyncCalendar, handleConnectCalendar } = useCalendarSync(authSession, setErrorMessage, setDispatchNotice);
+  // Calendar gets its own notice slot. It used to share dispatchNotice, so a
+  // calendar message ("Calendar synced — …" or "Finish connecting …")
+  // rendered inside a green banner titled "Reminders", and a reminder notice
+  // overwrote it and vice versa. setDispatchNotice is no longer passed down.
+  const [calendarNotice, setCalendarNotice] = useState<string | null>(null);
+  const { calendarStatus, isSyncing, isConnecting, handleSyncCalendar, handleConnectCalendar } = useCalendarSync(authSession, setErrorMessage, setCalendarNotice);
   const { state: pushState, message: pushMessage, isBusy: isPushBusy, enable: enablePush, disable: disablePush } = usePushNotifications();
   const {
     activeTaskId, activeTaskAction, scheduleEditorTaskId, scheduleEditorValue, setScheduleEditorValue,
@@ -71,6 +76,7 @@ export default function HomeTab() {
   async function handleSignOutAndClear() {
     await handleSignOut();
     setTasks([]);
+    setCalendarNotice(null);
   }
 
   function renderTaskCard(task: Task) {
@@ -155,6 +161,19 @@ export default function HomeTab() {
               {dueNotice ? <StatusBanner variant="success" title="Due now" message={dueNotice} /> : null}
 
               {dispatchNotice ? <StatusBanner variant="success" title="Reminders" message={dispatchNotice} /> : null}
+
+              {calendarNotice ? (
+                <StatusBanner
+                  // Only the sync producer reports a completed success. The
+                  // "finish connecting" producer is an instruction to do
+                  // something elsewhere, so it renders as info, never success.
+                  // This sniffs the producer copy in useCalendarSync (owned
+                  // elsewhere): if that copy changes, this must follow it.
+                  variant={calendarNotice.startsWith("Calendar synced") ? "success" : "info"}
+                  title="Calendar"
+                  message={calendarNotice}
+                />
+              ) : null}
 
               <PendingRemindersCard pending={pendingReminders} onAcked={(id) => setPendingReminders((prev) => prev.filter((x) => x.id !== id))} onError={(m) => setErrorMessage(m)} />
 
