@@ -216,8 +216,14 @@ class VoiceCapture(Base):
     status: Mapped[VoiceCaptureStatus] = mapped_column(
         SqlEnum(VoiceCaptureStatus, name="voice_capture_status", native_enum=True, create_type=False, values_callable=_enum_values),
         nullable=False,
-        default=VoiceCaptureStatus.TRANSCRIBED,
-        server_default=VoiceCaptureStatus.TRANSCRIBED.value,
+        # No default, deliberately. This defaulted to TRANSCRIBED, which claims a
+        # transcription service ran, and nothing in this codebase transcribes
+        # anything: the client pastes text. A default that asserts a fact no code
+        # produced is the same trap as the old NotificationDelivery fcm default,
+        # so omission now has to be explicit rather than silently claiming
+        # success. Every current insert sets it.
+        default=None,
+        server_default=None,
     )
     storage_path: Mapped[str | None] = mapped_column(Text)
     transcript: Mapped[str | None] = mapped_column(Text)

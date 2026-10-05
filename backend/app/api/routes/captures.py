@@ -31,12 +31,12 @@ async def voice_capture(
     current_user_id: Annotated[UUID, Depends(get_current_user_id)],
     session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> VoiceCaptureResponse:
-    # Store voice capture (lean: transcript already provided, mark transcribed)
+    # Store voice capture (honest: pasted text landed, no transcription service ran)
     capture = VoiceCapture(
         user_id=current_user_id,
         transcript=payload.transcript,
         transcript_provider=payload.transcript_provider or "manual",
-        status=VoiceCaptureStatus.TRANSCRIBED,
+        status=VoiceCaptureStatus.UPLOADED,
         storage_path=payload.storage_path,
     )
     session.add(capture)

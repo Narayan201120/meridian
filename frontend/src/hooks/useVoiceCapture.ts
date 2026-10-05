@@ -22,7 +22,7 @@ export function useVoiceCapture(deps: UseVoiceCaptureDeps) {
     setVoiceResult(null);
     try {
       const res = await captureVoice(voiceTranscript, true);
-      setVoiceResult(`Captured "${res.suggestion.title}"` + (res.task_id ? ` → task ${res.task_id.slice(0, 8)}` : ""));
+      setVoiceResult(`Structured "${res.suggestion.title}"` + (res.task_id ? ` → task ${res.task_id.slice(0, 8)}` : ""));
       setVoiceTranscript("");
       await deps.onTasksChanged();
     } catch (e: any) {

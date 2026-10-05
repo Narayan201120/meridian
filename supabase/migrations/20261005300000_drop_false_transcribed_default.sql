@@ -1,0 +1,20 @@
+-- Remove the false 'transcribed' default on voice_captures.status.
+--
+-- The ORM model defaulted status to TRANSCRIBED, which asserts that a
+-- transcription service ran. Nothing in this codebase transcribes anything: the
+-- client pastes text and the server structures it. Any insert that omitted the
+-- column therefore recorded a terminal success no code produced.
+--
+-- The database default was already 'pending_upload', so this only ever
+-- disagreed with the database rather than with reality. Left in place, the two
+-- would keep diverging, and an insert that omitted status would be recorded
+-- differently depending on which layer supplied the value.
+--
+-- No replacement default. Every insert sets status explicitly, so a missing one
+-- should fail loudly rather than be filled with a claim. A wrong-but-plausible
+-- default is the failure mode this whole batch has been removing.
+--
+-- Existing rows are left alone. They were written by an application that always
+-- passed status explicitly, so their values reflect what actually happened and
+-- rewriting them would destroy the one piece of truth in that column.
+alter table public.voice_captures alter column status drop default;

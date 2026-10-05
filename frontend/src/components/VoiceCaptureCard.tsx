@@ -13,7 +13,7 @@ export function VoiceCaptureCard() {
     useVoiceCapture({ onTasksChanged: refresh });
   return (
     <Card variant="floating" className="gap-4">
-      <SectionHeader eyebrow="Voice capture" title="Speak it, keep it" body="Paste a transcript (future: mic) — it will be structured and saved as a voice task. Never auto-writes calendar." />
+      <SectionHeader eyebrow="Voice capture" title="Speak it, keep it" body="Paste text (future: mic) — it will be structured and saved as a voice task. No audio is transcribed. Never auto-writes calendar." />
       <TextArea
         label="Voice transcript"
         placeholder="Voice transcript (e.g., Urgent: record demo video, needs 30 minutes)"
