@@ -71,11 +71,16 @@ export default defineConfig({
    * two modes must not share a run.
    */
   /**
-   * Both live-data-path specs. `failure-paths.spec.ts` also needs the real
-   * backend, since it drives the app's handling of real failing responses
-   * rather than simulating them in the client.
+   * Everything except the demo suite.
+   *
+   * An allowlist had to be edited every time a spec was added, and a spec that
+   * silently did not run is worse than no spec: it looked like coverage. Naming
+   * the one file that genuinely belongs to the other config means a new live
+   * spec runs by default and the exclusion stays visible.
+   *
+   * `flow.spec.ts` runs under playwright.demo.config.ts with no backend at all.
    */
-  testMatch: /(live-api|failure-paths)\.spec\.ts$/,
+  testIgnore: /flow\.spec\.ts$/,
   /**
    * Serial by necessity, not by accident. Every spec shares one SQLite file and
    * one seeded user, so two specs creating tasks at once would interleave. If

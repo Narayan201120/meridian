@@ -11,7 +11,8 @@
     "e2e": "bun run e2e:demo && bun run e2e:live",
     "e2e:demo": "playwright test -c playwright.demo.config.ts",
     "e2e:live": "playwright test -c playwright.config.ts",
-    "e2e:headed": "playwright test -c playwright.demo.config.ts --headed"
+    "e2e:headed": "playwright test -c playwright.demo.config.ts --headed",
+    "e2e:clean": "pwsh -NoProfile -File ./scripts/free-e2e-ports.ps1"
   },
   "dependencies": {
     "@expo-google-fonts/public-sans": "^0.4.2",
