@@ -7,6 +7,33 @@ import { ScheduleEditor } from "./ScheduleEditor";
 import { formatTaskTime } from "../lib/datetime";
 import type { Reminder, SuggestedBlock, Task } from "../lib/tasks";
 
+/**
+ * Colour a reminder line by what actually happened to it.
+ *
+ * Every line here used to render in `text-successtext`, a dark green, including
+ * reminders that had been failing to send forever and reminders the user had
+ * cancelled. Green means delivered, and a reminder that never arrived looked
+ * exactly like one that did. The status word was appended so it was technically
+ * recoverable by reading closely, but the visual weight said "done".
+ *
+ * Canceled is muted rather than green: it is inert history, not an achievement.
+ */
+function reminderTone(status: string): string {
+  switch (status) {
+    case "sent":
+      return "text-successtext";
+    case "failed":
+      return "text-redtext";
+    case "canceled":
+    case "acknowledged":
+      return "text-sandmuted dark:text-nightmuted";
+    default:
+      // pending and scheduled have not happened yet, so success green would be
+      // a claim about the future.
+      return "text-bodytext dark:text-nightmuted";
+  }
+}
+
 export interface TaskCardEditorCallbacks {
   onOpenTaskEditor: () => void;
   onCloseTaskEditor: () => void;
@@ -101,7 +128,7 @@ export default function TaskCardEditor({
       {reminders.length > 0 ? (
         <View className="gap-1.5 mt-1">
           {reminders.map((r) => (
-            <Text key={r.id} className="text-[13px] font-semibold text-successtext">
+            <Text key={r.id} className={`text-[13px] font-semibold ${reminderTone(r.status)}`}>
               Remind {r.status === "canceled" ? "(canceled) " : ""}{r.type === "scheduled_block" ? "block" : "due"} at {formatTaskTime(r.scheduled_for)} · {r.status}
             </Text>
           ))}
