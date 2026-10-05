@@ -1,7 +1,7 @@
 import { Platform } from "react-native";
 
 import { authRuntime, getAccessToken } from "./auth";
-import { type Loaded, failed, loadedOrEmpty } from "./loaded";
+import { type Loaded, failed, failureMessage, loadedOrEmpty } from "./loaded";
 
 export type TaskStatus = "inbox" | "scheduled" | "due_now" | "completed" | "archived";
 export type TaskPriority = "low" | "medium" | "high";
@@ -258,10 +258,20 @@ function extractErrorMessage(error: unknown): string {
 }
 
 async function readErrorDetail(response: Response): Promise<string> {
+  // Read the body exactly once. The previous version called `json()` first
+  // and fell back to `text()`, but a failed `json()` already consumes the
+  // stream, so the fallback threw "body stream already read" and replaced
+  // the real server error with gibberish about Response internals.
   try {
-    return JSON.stringify(await response.json());
+    const text = await response.text();
+    if (!text) return "";
+    try {
+      return JSON.stringify(JSON.parse(text));
+    } catch {
+      return text;
+    }
   } catch {
-    return await response.text();
+    return "";
   }
 }
 
@@ -374,8 +384,9 @@ export async function createTask(input: CreateTaskInput): Promise<Task> {
     return task;
   }
 
+  let response: Response;
   try {
-    const response = await fetch(`${tasksRuntime.apiBaseUrl}/tasks`, {
+    response = await fetch(`${tasksRuntime.apiBaseUrl}/tasks`, {
       method: "POST",
       headers: buildApiHeaders("application/json"),
       body: JSON.stringify({
@@ -387,19 +398,12 @@ export async function createTask(input: CreateTaskInput): Promise<Task> {
         estimated_duration_minutes: estimatedDuration,
       }),
     });
-
-    if (!response.ok) {
-      const detail = await readErrorDetail(response);
-
-      throw new Error(detail || `Failed to create task (${response.status})`);
-    }
-
-    const payload = (await response.json()) as Task;
-    const normalized = normalizeTask(payload);
-    void cacheTasks([normalized]);
-    return normalized;
   } catch (error) {
-    // Offline fallback: cache locally with temp id
+    // The request never completed, so there is no HTTP status. That is the
+    // `failed(reason, null)` case in `loaded.ts`: the browser genuinely has
+    // no route to the server. Only this case may mint the cached offline
+    // task, because only here is "not created on the server" unknowable.
+    failed(error instanceof Error ? error.message : String(error), null);
     const now = new Date().toISOString();
     const offlineTask: Task = {
       id: `offline-${Date.now()}`,
@@ -414,16 +418,25 @@ export async function createTask(input: CreateTaskInput): Promise<Task> {
       updated_at: now,
     };
     void cacheTasks([offlineTask]);
-    // If error was network, return offline task; else throw original
-    if (error instanceof TypeError && error.message.includes("fetch")) return offlineTask;
-    // For other errors (validation) still throw
-    if (offlineTask.id.startsWith("offline-") && (error as Error).message.includes("Failed to")) {
-      // If create failed due to offline, return offline task
-      const cached = await getCachedTasks();
-      if (cached) return offlineTask;
-    }
-    throw error;
+    return offlineTask;
   }
+
+  if (!response.ok) {
+    // The server answered and refused, so there IS a status. This must
+    // surface as an error, never as a fabricated task: returning an
+    // `offline-*` row here would clear the create form for a task that was
+    // never created, and no substring of a message string may override that.
+    // The message comes from the shared `Loaded` vocabulary, so a 401 reads
+    // as an expired session rather than a generic failure.
+    const detail = await readErrorDetail(response);
+    const reason = detail || `Failed to create task (${response.status})`;
+    throw new Error(failureMessage(failed(reason, response.status)) ?? reason);
+  }
+
+  const payload = (await response.json()) as Task;
+  const normalized = normalizeTask(payload);
+  void cacheTasks([normalized]);
+  return normalized;
 }
 
 export async function structureCapture(text: string): Promise<CaptureSuggestion> {
