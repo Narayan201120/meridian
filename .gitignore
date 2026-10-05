@@ -19,6 +19,11 @@ verify-*.png
 frontend/test-results/
 frontend/playwright-report/
 
+# Row snapshots written by backend/scripts/apply_migrations.py before it touches
+# a live database. They contain real user UUIDs, so they are local evidence of a
+# migration run and must never be committed.
+backend/migration_backup_*.json
+
 # SQLite database the E2E harness creates. It is rebuilt from scratch on every
 # `bun run e2e:live`, holds no real user data, and must never be committed.
 backend/e2e.db
