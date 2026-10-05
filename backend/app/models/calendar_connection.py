@@ -44,6 +44,7 @@ class ReminderStatus(StrEnum):
     SENT = "sent"
     FAILED = "failed"
     CANCELED = "canceled"
+    ACKNOWLEDGED = "acknowledged"
 
 
 class NotificationDeliveryStatus(StrEnum):

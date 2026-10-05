@@ -1,0 +1,15 @@
+-- Add 'acknowledged' to public.reminder_status: "user dismissed this reminder",
+-- distinct from 'canceled' ("withdrawn because the task changed").
+--
+-- `if not exists` makes this idempotent: safe to re-run against hosted
+-- Supabase (mcmnmfqseoeacavykrkw), where the initial schema is already applied.
+--
+-- No `after` position is specified, so the value appends last. That matches
+-- the Python `ReminderStatus` definition order (ACKNOWLEDGED after CANCELED),
+-- keeping the PG enum ordering and the ORM ordering in agreement. No query
+-- relies on enum sort order -- the dispatch sweep reads only PENDING rows and
+-- the list endpoints filter by equality/IN -- so placement is cosmetic.
+-- (The pre-Postgres-12 restriction on ALTER TYPE ... ADD VALUE inside a
+-- transaction block does not apply here: the existing enum-add migration
+-- 20260425101500 runs the same one-liner form on this project without issue.)
+alter type public.reminder_status add value if not exists 'acknowledged';
