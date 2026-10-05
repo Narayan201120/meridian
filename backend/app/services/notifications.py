@@ -21,7 +21,7 @@ from urllib.parse import urlparse
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -37,6 +37,25 @@ from app.models.task import Task
 logger = logging.getLogger(__name__)
 
 WEB_PUSH_PROVIDER = "web_push"
+
+#: Push-service statuses that mean the subscription is permanently gone: the
+#: browser was uninstalled, the subscription expired, or site data was cleared.
+#: Retrying these can never succeed.
+GONE_STATUSES = frozenset({404, 410})
+
+
+class SubscriptionGoneError(Exception):
+    """The push service no longer holds this subscription (HTTP 404 or 410).
+
+    Typed so callers can distinguish a dead subscription from a transient
+    failure without string-matching an error message. Carries the upstream
+    status code for logging.
+    """
+
+    def __init__(self, *, status_code: int, detail: str = "") -> None:
+        super().__init__(f"Push subscription gone (HTTP {status_code}): {detail}"[:500])
+        self.status_code = status_code
+        self.detail = detail
 
 
 def get_push_transport() -> "WebPushTransport":
@@ -82,6 +101,8 @@ class WebPushTransport:
         body = json.dumps(payload).encode()
         async with httpx.AsyncClient(timeout=15) as client:
             response = await client.post(endpoint, content=body, headers=headers)
+        if response.status_code in GONE_STATUSES:
+            raise SubscriptionGoneError(status_code=response.status_code, detail=response.text[:200])
         if response.is_error:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
@@ -205,7 +226,24 @@ async def deliver_reminder(
         session.add(delivery)
         try:
             message_id = await transport.send(subscription=device.push_token, payload=payload)
-        except Exception as exc:  # noqa: BLE001 - any transport failure must be recorded
+        except SubscriptionGoneError as exc:
+            delivery.status = NotificationDeliveryStatus.FAILED
+            delivery.error_message = str(exc)[:500]
+            logger.info("push subscription gone for device %s (HTTP %s); deleting device", device.id, exc.status_code)
+            await _delete_device(session, device)
+            continue
+        except HTTPException as exc:
+            delivery.status = NotificationDeliveryStatus.FAILED
+            delivery.error_message = str(exc)[:500]
+            if exc.status_code in GONE_STATUSES:
+                # A transport that reports the upstream status as HTTPException
+                # rather than SubscriptionGoneError: still a dead subscription.
+                logger.info("push subscription gone for device %s (HTTP %s); deleting device", device.id, exc.status_code)
+                await _delete_device(session, device)
+            else:
+                logger.warning("push delivery failed for device %s: %s", device.id, exc)
+            continue
+        except Exception as exc:  # noqa: BLE001 - any other transport failure must be recorded
             delivery.status = NotificationDeliveryStatus.FAILED
             delivery.error_message = str(exc)[:500]
             logger.warning("push delivery failed for device %s: %s", device.id, exc)
@@ -217,6 +255,15 @@ async def deliver_reminder(
 
     await session.commit()
     return sent
+
+
+async def _delete_device(session: AsyncSession, device: Device) -> None:
+    """Delete a dead subscription. Idempotent by construction.
+
+    A set-based DELETE matches zero rows instead of raising when a concurrent
+    sweep already removed the row, so a losing race stays silent.
+    """
+    await session.execute(delete(Device).where(Device.id == device.id))
 
 
 def _body_for(reminder: Reminder, task_title: str | None) -> str:
