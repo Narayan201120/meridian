@@ -160,7 +160,11 @@ export default function HomeTab() {
 
               {dueNotice ? <StatusBanner variant="success" title="Due now" message={dueNotice} /> : null}
 
-              {dispatchNotice ? <StatusBanner variant="success" title="Reminders" message={dispatchNotice} /> : null}
+              {/* Titled "Tasks", not "Reminders". This slot used to carry reminder dispatch
+                  notices and is now only ever written by the offline-sync path, so a
+                  banner labelled Reminders was claiming a delivery that had not
+                  happened. Same reason calendar got its own slot. */}
+              {dispatchNotice ? <StatusBanner variant="success" title="Tasks" message={dispatchNotice} /> : null}
 
               {calendarNotice ? (
                 <StatusBanner
