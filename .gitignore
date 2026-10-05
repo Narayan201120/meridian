@@ -9,8 +9,11 @@ backend/.venv/
 backend/.env
 frontend/.env
 
-# Run artifacts from local dev / verification
+# Run artifacts from local dev / verification. uvicorn and expo both split their
+# output across a .log and a .err, so ignoring only the .log half left an untracked
+# file behind after every local run.
 *.log
+*.err
 backend/backend-run.log
 frontend/expo*.log
 .playwright-mcp/

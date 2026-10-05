@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
-import { getCurrentSession, type AuthSession } from "../lib/auth";
+import { getCurrentSession, onSessionLost, type AuthSession } from "../lib/auth";
 import { listAllReminders, listTasks, tasksRuntime, type Task } from "../lib/tasks";
 import { listReminders, type Reminder } from "../lib/tasks";
 import { getCalendarStatus } from "../lib/tasks";
@@ -111,6 +111,30 @@ export function TasksProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  /**
+   * A dead session has to become a signed-out UI, not just failed requests.
+   *
+   * `apiFetch` can tell the difference between "refresh worked" and "this
+   * session is finished", but it is a plain module function and cannot set state
+   * here. Without this subscription the header keeps rendering "Signed in as
+   * ..." against a token the server has already rejected, which is the original
+   * defect rather than a fix for it.
+   *
+   * Tasks and reminders are cleared on the way out. Leaving them would put a
+   * previous user's rows on screen for whoever signs in next.
+   */
+  useEffect(() => {
+    return onSessionLost(() => {
+      setAuthSession(null);
+      setTasks([]);
+      setPendingReminders([]);
+      setRemindersByTask({});
+      setIsStale(false);
+      setCalendarStatus(null);
+      setIsLoading(false);
+    });
+  }, []);
 
   useEffect(() => {
     if (!tasksRuntime.isApiMode || authSession === null) return;

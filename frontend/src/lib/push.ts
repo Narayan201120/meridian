@@ -7,7 +7,7 @@
  * hidden instead of offering something that cannot work.
  */
 
-import { buildApiHeaders, tasksRuntime } from "./tasks";
+import { apiFetch, tasksRuntime } from "./tasks";
 
 export type PushState =
   | { supported: false; reason: string }
@@ -28,9 +28,7 @@ export async function getPushConfig(): Promise<PushConfig> {
   if (!tasksRuntime.isApiMode) {
     return { enabled: false, public_key: null };
   }
-  const response = await fetch(`${tasksRuntime.apiBaseUrl}/push/config`, {
-    headers: buildApiHeaders(),
-  });
+  const response = await apiFetch(`${tasksRuntime.apiBaseUrl}/push/config`);
   if (!response.ok) {
     return { enabled: false, public_key: null };
   }
@@ -92,15 +90,18 @@ export async function enablePush(deviceName?: string): Promise<PushState> {
     applicationServerKey: urlBase64ToUint8Array(config.public_key),
   });
 
-  const response = await fetch(`${tasksRuntime.apiBaseUrl}/devices`, {
-    method: "POST",
-    headers: buildApiHeaders("application/json"),
-    body: JSON.stringify({
-      platform: "web",
-      device_name: deviceName ?? defaultDeviceName(),
-      push_subscription: subscription.toJSON(),
-    }),
-  });
+  const response = await apiFetch(
+    `${tasksRuntime.apiBaseUrl}/devices`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        platform: "web",
+        device_name: deviceName ?? defaultDeviceName(),
+        push_subscription: subscription.toJSON(),
+      }),
+      contentType: "application/json",
+    },
+  );
   if (!response.ok) {
     throw new Error(`Failed to register this device for push (${response.status}).`);
   }
@@ -112,9 +113,7 @@ export async function disablePush(): Promise<void> {
   if (!isSupported()) {
     return;
   }
-  const devices = await fetch(`${tasksRuntime.apiBaseUrl}/devices`, {
-    headers: buildApiHeaders(),
-  });
+  const devices = await apiFetch(`${tasksRuntime.apiBaseUrl}/devices`);
   if (!devices.ok) {
     // The server would not even say which devices hold push tokens, so
     // nothing was deleted. Throw before touching the local subscription: the
@@ -125,7 +124,7 @@ export async function disablePush(): Promise<void> {
   const rows = (await devices.json()) as { id: string; has_push_token: boolean }[];
   const targets = rows.filter((r) => r.has_push_token);
   const results = await Promise.all(
-    targets.map((r) => fetch(`${tasksRuntime.apiBaseUrl}/devices/${r.id}`, { method: "DELETE", headers: buildApiHeaders() })),
+    targets.map((r) => apiFetch(`${tasksRuntime.apiBaseUrl}/devices/${r.id}`, { method: "DELETE" })),
   );
   const failed = results.filter((r) => !r.ok);
   if (failed.length > 0) {

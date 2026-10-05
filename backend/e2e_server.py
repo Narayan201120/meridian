@@ -128,7 +128,7 @@ def _public_jwk() -> dict[str, str]:
     }
 
 
-def _mint_access_token() -> tuple[str, int]:
+def _mint_access_token(ttl_seconds: int = TOKEN_TTL_SECONDS) -> tuple[str, int]:
     if settings.supabase_jwt_issuer is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -141,10 +141,45 @@ def _mint_access_token() -> tuple[str, int]:
         "iss": settings.supabase_jwt_issuer,
         "aud": settings.supabase_jwt_audience,
         "iat": now,
-        "exp": now + TOKEN_TTL_SECONDS,
+        "exp": now + ttl_seconds,
     }
     token = pyjwt.encode(payload, _private_pem(), algorithm="ES256", headers={"kid": _KID})
-    return token, now + TOKEN_TTL_SECONDS
+    return token, now + ttl_seconds
+
+
+REFRESH_TTL_SECONDS = 7 * 24 * 3600
+
+
+def _mint_refresh_token() -> str:
+    """A verifiable refresh token.
+
+    The stub used to return `secrets.token_urlsafe(32)`, which nothing could check.
+    That made a refresh test unfalsifiable: a client that ignored the stored token
+    entirely, or invented its own, would look identical to one that used it
+    correctly. Signing it means a wrong or forged token is actually rejected, so
+    "the client sent the refresh token it was given" becomes an assertion rather
+    than a hope.
+    """
+    now = int(time.time())
+    payload = {"sub": SEED_USER_ID, "typ": "refresh", "iat": now, "exp": now + REFRESH_TTL_SECONDS}
+    return pyjwt.encode(payload, _private_pem(), algorithm="ES256", headers={"kid": _KID})
+
+
+def _verify_refresh_token(token: str) -> None:
+    try:
+        claims = pyjwt.decode(
+            token,
+            _private_pem(),
+            algorithms=["ES256"],
+            options={"verify_aud": False, "verify_iss": False},
+        )
+    except pyjwt.PyJWTError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid refresh token.",
+        ) from exc
+    if claims.get("typ") != "refresh" or claims.get("sub") != SEED_USER_ID:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token.")
 
 
 def _warm_jwks_cache() -> None:
@@ -185,22 +220,57 @@ def _check_credentials(email: str, password: str) -> bool:
 auth_router = APIRouter(tags=["e2e-auth"])
 
 
+def _session_response(access_token: str, expires_at: int) -> dict:
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "refresh_token": _mint_refresh_token(),
+        "expires_in": expires_at - int(time.time()),
+        "expires_at": expires_at,
+        "user": {"id": SEED_USER_ID, "email": SEED_EMAIL},
+    }
+
+
 @auth_router.post("/auth/v1/token")
-async def password_grant(
+async def token_grant(
     request: Request,
     grant_type: str | None = Query(default=None),
 ) -> dict:
-    if grant_type is not None and grant_type != "password":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unsupported grant_type: {grant_type!r}.",
-        )
+    """Password and refresh grants, matching GoTrue's shape.
+
+    The refresh grant is not optional scaffolding. A Supabase access token lives
+    an hour; the client stores a refresh token and never uses it, so an hour
+    after signing in every API call 401s and the app presents itself as signed in
+    while doing nothing. That failure is only reachable by waiting an hour, which
+    is why it can sit on `main` and why a test has to be able to request an
+    already-expired access token on demand.
+    """
+    grant = grant_type if grant_type is not None else "password"
+
     try:
         body = await request.json()
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Request body must be JSON."
         ) from exc
+
+    if grant == "refresh_token":
+        presented = body.get("refresh_token", "")
+        if not isinstance(presented, str) or not presented:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="refresh_token is required."
+            )
+        _verify_refresh_token(presented)
+        access_token, expires_at = _mint_access_token()
+        await asyncio.to_thread(_warm_jwks_cache)
+        return _session_response(access_token, expires_at)
+
+    if grant != "password":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported grant_type: {grant_type!r}.",
+        )
+
     email = body.get("email", "")
     password = body.get("password", "")
     if not isinstance(email, str) or not isinstance(password, str):
@@ -216,14 +286,7 @@ async def password_grant(
     # an in-request fetch (which would deadlock: blocking urllib on the loop
     # while the loop must serve the JWKS request itself).
     await asyncio.to_thread(_warm_jwks_cache)
-    return {
-        "access_token": access_token,
-        "token_type": "bearer",
-        "refresh_token": secrets.token_urlsafe(32),
-        "expires_in": TOKEN_TTL_SECONDS,
-        "expires_at": expires_at,
-        "user": {"id": SEED_USER_ID, "email": SEED_EMAIL},
-    }
+    return _session_response(access_token, expires_at)
 
 
 @auth_router.get("/auth/v1/.well-known/jwks.json")
@@ -250,6 +313,26 @@ async def logout() -> Response:
 # That failure is the evidence: a NotificationDelivery row exists, which can
 # only happen if the server reached a device on its own.
 # ---------------------------------------------------------------------------
+
+
+@auth_router.post("/_e2e/expire-access-token")
+async def expire_access_token() -> dict:
+    """A session whose access token is already dead but whose refresh token works.
+
+    Shaped exactly like a real one-hour-old Supabase session, so a browser test
+    can plant it in localStorage and assert the app recovers on its own. Minting
+    it here rather than waiting an hour is the point: an untestable failure mode
+    gets fixed once and then never regresses.
+    """
+    expired_token, _ = _mint_access_token(ttl_seconds=-3600)
+    _, expires_at = _mint_access_token(ttl_seconds=-3600)
+    await asyncio.to_thread(_warm_jwks_cache)
+    return {
+        "access_token": expired_token,
+        "expires_at": expires_at,
+        "refresh_token": _mint_refresh_token(),
+        "user": {"id": SEED_USER_ID, "email": SEED_EMAIL},
+    }
 
 
 @auth_router.post("/_e2e/seed-due-reminder")

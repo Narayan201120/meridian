@@ -60,7 +60,12 @@ jobs:
       # the same bar as the app. Leaving it unlinted would let the thing CI most
       # depends on rot without noticing.
       - name: Ruff
-        run: ruff check app tests e2e_server.py
+        # `scripts` is included because two of them are real tools now:
+        # apply_migrations.py touches production DDL and inspect_migration_state.py
+        # is what anyone would run to check a schema claim. Linting the directory
+        # the project already depends on is cheaper than a bug in a script that
+        # only runs by hand, which is exactly where bugs hide.
+        run: ruff check app tests e2e_server.py scripts
 
       - name: Pytest
         run: pytest -q

@@ -1,6 +1,6 @@
 import { Platform } from "react-native";
 
-import { authRuntime, getAccessToken } from "./auth";
+import { authRuntime, getAccessToken, refreshAccessToken } from "./auth";
 import { type Loaded, failed, failureMessage, loadedOrEmpty } from "./loaded";
 
 export type TaskStatus = "inbox" | "scheduled" | "due_now" | "completed" | "archived";
@@ -172,11 +172,14 @@ export async function pushPendingOfflineTasks(): Promise<number> {
           due_at: m.dueAt || null,
           estimated_duration_minutes: m.estimatedDurationMinutes ?? null,
         };
-        const res = await fetch(`${apiBaseUrl}/tasks`, {
-          method: "POST",
-          headers: buildApiHeaders("application/json"),
-          body: JSON.stringify(payload),
-        });
+        const res = await apiFetch(
+          `${apiBaseUrl}/tasks`,
+          {
+            method: "POST",
+            body: JSON.stringify(payload),
+            contentType: "application/json",
+          },
+        );
         if (!res.ok) continue;
         const created = (await res.json()) as Task;
         await db.write(async () => {
@@ -275,7 +278,15 @@ async function readErrorDetail(response: Response): Promise<string> {
   }
 }
 
-export function buildApiHeaders(contentType?: string): HeadersInit {
+/**
+ * Builds an Authorization header from whatever token is current right now.
+ *
+ * Not exported any more. Every authenticated call goes through `apiFetch`, which
+ * calls this again on the retry so a refreshed token is actually used. A public
+ * `buildApiHeaders` is an invitation to build a header once and send a stale
+ * token with it, which is the bug this replaced.
+ */
+function buildApiHeaders(contentType?: string): HeadersInit {
   const accessToken = getAccessToken();
 
   if (accessToken === null) {
@@ -286,6 +297,54 @@ export function buildApiHeaders(contentType?: string): HeadersInit {
     ...(contentType ? { "Content-Type": contentType } : {}),
     Authorization: `Bearer ${accessToken}`,
   };
+}
+
+/**
+ * The one place an authenticated request is made.
+ *
+ * Every call site used to call `fetch` with `buildApiHeaders()` directly, which
+ * made a 401 final: the token in hand was the token you got, so an hour after
+ * signing in the app was 401ing forever while still claiming to be signed in.
+ * Retry logic placed next to `buildApiHeaders` would have meant copying it into
+ * every call site, and one forgotten copy is a regression that stays invisible
+ * until an hour has passed.
+ *
+ * So this is the seam. It owns three decisions that must not vary by caller:
+ *
+ *   - a 401 triggers exactly one refresh attempt, then one retry
+ *   - the retried request carries a freshly built Authorization header, not the
+ *     rejected one
+ *   - a second 401 means the session is genuinely gone, so it propagates as a 401
+ *     and `listTasks` reports `authExpired`, which signs the UI out
+ *
+ * `body` is typed as `string | undefined` on purpose: every caller passes
+ * `JSON.stringify(...)`, which `fetch` does not consume, so the replay is safe.
+ * A stream or a `FormData` body would not be, and would have to be re-created
+ * per attempt instead.
+ */
+export async function apiFetch(
+  url: string,
+  init: { method?: string; body?: string; contentType?: string } = {},
+): Promise<Response> {
+  const send = () =>
+    fetch(url, {
+      method: init.method,
+      headers: buildApiHeaders(init.contentType),
+      ...(init.body === undefined ? {} : { body: init.body }),
+    });
+
+  const response = await send();
+  if (response.status !== 401) return response;
+
+  const refreshed = await refreshAccessToken();
+  if (refreshed === null) {
+    // Either refresh is impossible, or it already ended the session. Return the
+    // 401 rather than throwing, so each caller's existing error handling decides
+    // what a dead session means on that screen.
+    return response;
+  }
+
+  return send();
 }
 
 /**
@@ -310,9 +369,7 @@ export async function listTasks(): Promise<Loaded<Task[]>> {
   }
 
   try {
-    const response = await fetch(`${tasksRuntime.apiBaseUrl}/tasks`, {
-      headers: buildApiHeaders(),
-    });
+    const response = await apiFetch(`${tasksRuntime.apiBaseUrl}/tasks`);
 
     if (!response.ok) {
       return failed(`Failed to load tasks (${response.status})`, response.status);
@@ -342,7 +399,7 @@ export async function listTasks(): Promise<Loaded<Task[]>> {
 export async function syncTasksFromMutations(since?: string): Promise<Loaded<Task[]>> {
   if (!tasksRuntime.isApiMode) return { kind: "empty" };
   const url = since ? `${tasksRuntime.apiBaseUrl}/tasks/mutations?since=${encodeURIComponent(since)}` : `${tasksRuntime.apiBaseUrl}/tasks/mutations`;
-  const response = await fetch(url, { headers: buildApiHeaders() });
+  const response = await apiFetch(url);
   if (!response.ok) {
     const detail = await readErrorDetail(response);
     throw new Error(detail || `Failed to sync mutations (${response.status})`);
@@ -386,18 +443,21 @@ export async function createTask(input: CreateTaskInput): Promise<Task> {
 
   let response: Response;
   try {
-    response = await fetch(`${tasksRuntime.apiBaseUrl}/tasks`, {
-      method: "POST",
-      headers: buildApiHeaders("application/json"),
-      body: JSON.stringify({
-        title,
-        notes,
-        status,
-        priority,
-        due_at: dueAt,
-        estimated_duration_minutes: estimatedDuration,
-      }),
-    });
+    response = await apiFetch(
+      `${tasksRuntime.apiBaseUrl}/tasks`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          title,
+          notes,
+          status,
+          priority,
+          due_at: dueAt,
+          estimated_duration_minutes: estimatedDuration,
+        }),
+        contentType: "application/json",
+      },
+    );
   } catch (error) {
     // The request never completed, so there is no HTTP status. That is the
     // `failed(reason, null)` case in `loaded.ts`: the browser genuinely has
@@ -471,11 +531,14 @@ export async function structureCapture(text: string): Promise<CaptureSuggestion>
     };
   }
 
-  const response = await fetch(`${tasksRuntime.apiBaseUrl}/captures/structure`, {
-    method: "POST",
-    headers: buildApiHeaders("application/json"),
-    body: JSON.stringify({ text: normalizedText }),
-  });
+  const response = await apiFetch(
+    `${tasksRuntime.apiBaseUrl}/captures/structure`,
+    {
+      method: "POST",
+      body: JSON.stringify({ text: normalizedText }),
+      contentType: "application/json",
+    },
+  );
 
   if (!response.ok) {
     const detail = await readErrorDetail(response);
@@ -504,11 +567,14 @@ export async function updateTask(taskId: string, input: UpdateTaskInput): Promis
     return nextTask;
   }
 
-  const response = await fetch(`${tasksRuntime.apiBaseUrl}/tasks/${taskId}`, {
-    method: "PATCH",
-    headers: buildApiHeaders("application/json"),
-    body: JSON.stringify(input),
-  });
+  const response = await apiFetch(
+    `${tasksRuntime.apiBaseUrl}/tasks/${taskId}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(input),
+      contentType: "application/json",
+    },
+  );
 
   if (!response.ok) {
     const detail = await readErrorDetail(response);
@@ -525,10 +591,12 @@ export async function deleteTask(taskId: string): Promise<void> {
     return;
   }
 
-  const response = await fetch(`${tasksRuntime.apiBaseUrl}/tasks/${taskId}`, {
-    method: "DELETE",
-    headers: buildApiHeaders(),
-  });
+  const response = await apiFetch(
+    `${tasksRuntime.apiBaseUrl}/tasks/${taskId}`,
+    {
+      method: "DELETE",
+    },
+  );
 
   if (!response.ok) {
     const detail = await readErrorDetail(response);
@@ -541,9 +609,7 @@ export async function getCalendarStatus(): Promise<string> {
     return "not_connected";
   }
 
-  const response = await fetch(`${tasksRuntime.apiBaseUrl}/calendar/google/status`, {
-    headers: buildApiHeaders(),
-  });
+  const response = await apiFetch(`${tasksRuntime.apiBaseUrl}/calendar/google/status`);
 
   if (!response.ok) {
     const detail = await readErrorDetail(response);
@@ -565,9 +631,7 @@ export async function getCalendarAuthorizationUrl(returnTo?: string): Promise<st
   }
 
   const query = returnTo ? `?return_to=${encodeURIComponent(returnTo)}` : "";
-  const response = await fetch(`${tasksRuntime.apiBaseUrl}/calendar/google/authorize${query}`, {
-    headers: buildApiHeaders(),
-  });
+  const response = await apiFetch(`${tasksRuntime.apiBaseUrl}/calendar/google/authorize${query}`);
 
   if (!response.ok) {
     const detail = await readErrorDetail(response);
@@ -595,16 +659,19 @@ export async function suggestBlocks(taskId: string, input: SuggestBlocksInput = 
     return { task_id: taskId, duration_minutes: duration, suggestions };
   }
 
-  const response = await fetch(`${tasksRuntime.apiBaseUrl}/tasks/${taskId}/suggest-blocks`, {
-    method: "POST",
-    headers: buildApiHeaders("application/json"),
-    body: JSON.stringify({
-      duration_minutes: input.duration_minutes ?? null,
-      time_min: input.time_min ?? null,
-      time_max: input.time_max ?? null,
-      max_results: input.max_results ?? 3,
-    }),
-  });
+  const response = await apiFetch(
+    `${tasksRuntime.apiBaseUrl}/tasks/${taskId}/suggest-blocks`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        duration_minutes: input.duration_minutes ?? null,
+        time_min: input.time_min ?? null,
+        time_max: input.time_max ?? null,
+        max_results: input.max_results ?? 3,
+      }),
+      contentType: "application/json",
+    },
+  );
 
   if (!response.ok) {
     const detail = await readErrorDetail(response);
@@ -653,15 +720,18 @@ export async function createTaskCalendarBlock(taskId: string, block: SuggestedBl
     };
   }
 
-  const response = await fetch(`${tasksRuntime.apiBaseUrl}/tasks/${taskId}/blocks`, {
-    method: "POST",
-    headers: buildApiHeaders("application/json"),
-    body: JSON.stringify({
-      suggested_start_at: block.suggested_start_at,
-      suggested_end_at: block.suggested_end_at,
-      suggestion_reason: block.reason,
-    }),
-  });
+  const response = await apiFetch(
+    `${tasksRuntime.apiBaseUrl}/tasks/${taskId}/blocks`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        suggested_start_at: block.suggested_start_at,
+        suggested_end_at: block.suggested_end_at,
+        suggestion_reason: block.reason,
+      }),
+      contentType: "application/json",
+    },
+  );
 
   if (!response.ok) {
     const detail = await readErrorDetail(response);
@@ -692,10 +762,12 @@ export async function confirmTaskCalendarBlock(taskId: string, blockId: string):
     };
   }
 
-  const response = await fetch(`${tasksRuntime.apiBaseUrl}/tasks/${taskId}/blocks/${blockId}/confirm`, {
-    method: "POST",
-    headers: buildApiHeaders(),
-  });
+  const response = await apiFetch(
+    `${tasksRuntime.apiBaseUrl}/tasks/${taskId}/blocks/${blockId}/confirm`,
+    {
+      method: "POST",
+    },
+  );
 
   if (!response.ok) {
     const detail = await readErrorDetail(response);
@@ -710,9 +782,7 @@ export async function listTaskCalendarBlocks(taskId: string): Promise<TaskCalend
     return [];
   }
 
-  const response = await fetch(`${tasksRuntime.apiBaseUrl}/tasks/${taskId}/blocks`, {
-    headers: buildApiHeaders(),
-  });
+  const response = await apiFetch(`${tasksRuntime.apiBaseUrl}/tasks/${taskId}/blocks`);
 
   if (!response.ok) {
     const detail = await readErrorDetail(response);
@@ -744,10 +814,12 @@ export async function cancelTaskCalendarBlock(taskId: string, blockId: string): 
     };
   }
 
-  const response = await fetch(`${tasksRuntime.apiBaseUrl}/tasks/${taskId}/blocks/${blockId}/cancel`, {
-    method: "POST",
-    headers: buildApiHeaders(),
-  });
+  const response = await apiFetch(
+    `${tasksRuntime.apiBaseUrl}/tasks/${taskId}/blocks/${blockId}/cancel`,
+    {
+      method: "POST",
+    },
+  );
 
   if (!response.ok) {
     const detail = await readErrorDetail(response);
@@ -780,9 +852,7 @@ export async function listReminders(taskId: string): Promise<Reminder[]> {
     return [];
   }
 
-  const response = await fetch(`${tasksRuntime.apiBaseUrl}/tasks/${taskId}/reminders`, {
-    headers: buildApiHeaders(),
-  });
+  const response = await apiFetch(`${tasksRuntime.apiBaseUrl}/tasks/${taskId}/reminders`);
 
   if (!response.ok) {
     const detail = await readErrorDetail(response);
@@ -819,10 +889,12 @@ export async function acknowledgeReminder(reminderId: string): Promise<Reminder>
       updated_at: new Date().toISOString(),
     };
   }
-  const response = await fetch(`${tasksRuntime.apiBaseUrl}/tasks/reminders/${reminderId}/ack`, {
-    method: "POST",
-    headers: buildApiHeaders(),
-  });
+  const response = await apiFetch(
+    `${tasksRuntime.apiBaseUrl}/tasks/reminders/${reminderId}/ack`,
+    {
+      method: "POST",
+    },
+  );
   if (!response.ok) {
     const detail = await readErrorDetail(response);
     throw new Error(detail || `Failed to ack reminder (${response.status})`);
@@ -842,7 +914,7 @@ export async function listAllReminders(status?: string): Promise<Loaded<Reminder
   if (!tasksRuntime.isApiMode) return { kind: "empty" };
   const url = status ? `${tasksRuntime.apiBaseUrl}/tasks/reminders/list?status_filter=${status}` : `${tasksRuntime.apiBaseUrl}/tasks/reminders/list`;
   try {
-    const response = await fetch(url, { headers: buildApiHeaders() });
+    const response = await apiFetch(url);
     if (!response.ok) {
       const detail = await readErrorDetail(response);
       return failed(detail || `Failed to list reminders (${response.status})`, response.status);
@@ -879,11 +951,14 @@ export async function captureVoice(transcript: string, createTaskFlag = true): P
     }
     return { voice_capture_id: `demo-vc-${Date.now()}`, transcript: normalized, suggestion, task_id: taskId };
   }
-  const response = await fetch(`${tasksRuntime.apiBaseUrl}/captures/voice`, {
-    method: "POST",
-    headers: buildApiHeaders("application/json"),
-    body: JSON.stringify({ transcript: normalized, create_task: createTaskFlag }),
-  });
+  const response = await apiFetch(
+    `${tasksRuntime.apiBaseUrl}/captures/voice`,
+    {
+      method: "POST",
+      body: JSON.stringify({ transcript: normalized, create_task: createTaskFlag }),
+      contentType: "application/json",
+    },
+  );
   if (!response.ok) {
     const detail = await readErrorDetail(response);
     throw new Error(detail || `Failed to capture voice (${response.status})`);
@@ -893,11 +968,14 @@ export async function captureVoice(transcript: string, createTaskFlag = true): P
 
 export async function syncCalendarEvents(timeMin: string, timeMax: string): Promise<{ synced: number }> {
   if (!tasksRuntime.isApiMode) return { synced: 0 };
-  const response = await fetch(`${tasksRuntime.apiBaseUrl}/calendar/google/sync`, {
-    method: "POST",
-    headers: buildApiHeaders("application/json"),
-    body: JSON.stringify({ time_min: timeMin, time_max: timeMax }),
-  });
+  const response = await apiFetch(
+    `${tasksRuntime.apiBaseUrl}/calendar/google/sync`,
+    {
+      method: "POST",
+      body: JSON.stringify({ time_min: timeMin, time_max: timeMax }),
+      contentType: "application/json",
+    },
+  );
   if (!response.ok) {
     const detail = await readErrorDetail(response);
     throw new Error(detail || `Failed to sync calendar (${response.status})`);

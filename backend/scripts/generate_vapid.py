@@ -10,7 +10,6 @@ import pathlib
 import sys
 
 from py_vapid import Vapid
-from cryptography.hazmat.primitives import serialization
 
 ENV_PATH = pathlib.Path(r"A:\Projects\meridian\backend\.env")
 
