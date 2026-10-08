@@ -777,3 +777,46 @@ class TestReturnToGuard:
     def test_trailing_slash_in_config_still_matches(self, monkeypatch):
         monkeypatch.setattr(settings, "cors_origins", ["http://localhost:8081/"])
         assert GoogleCalendarService._safe_return_to("http://localhost:8081/x") == "http://localhost:8081/x"
+
+
+@pytest.mark.asyncio
+async def test_suggest_blocks_live_failure_is_not_reported_as_free(client, db_session):
+    """A failed live free/busy read must not become free time.
+
+    Regression: the live fetch error was swallowed, the empty busy list was
+    treated as "no meetings", and the response claimed calendar-derived
+    freebusy_gap slots the calendar never confirmed.
+    """
+    from uuid import UUID
+
+    from fastapi import HTTPException
+
+    from app.models import CalendarConnection
+
+    create_resp = await client.post("/api/v1/tasks", json={"title": "Honest suggest"})
+    assert create_resp.status_code == 201
+    task_id = create_resp.json()["id"]
+    task_user_id = UUID(create_resp.json()["user_id"])
+    conn = CalendarConnection(user_id=task_user_id, provider="google", provider_account_id="primary", status="active")
+    db_session.add(conn)
+    await db_session.commit()
+
+    with patch("app.services.scheduling.GoogleCalendarService.fetch_freebusy", new_callable=AsyncMock) as mock_fb:
+        mock_fb.side_effect = HTTPException(status_code=502, detail="Google Calendar freeBusy query failed.")
+        resp = await client.post(f"/api/v1/tasks/{task_id}/suggest-blocks", json={})
+        assert resp.status_code == 502, f"unverified calendar must not read as free: {resp.status_code} {resp.text}"
+
+
+@pytest.mark.asyncio
+async def test_suggest_blocks_without_connection_does_not_claim_freebusy(client):
+    """With no calendar connected, suggestions must not claim a calendar basis."""
+    create_resp = await client.post("/api/v1/tasks", json={"title": "No calendar"})
+    assert create_resp.status_code == 201
+    task_id = create_resp.json()["id"]
+    resp = await client.post(f"/api/v1/tasks/{task_id}/suggest-blocks", json={})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["suggestions"], "expected time picks, just not calendar-derived ones"
+    for s in resp.json()["suggestions"]:
+        assert s["reason"].get("kind") != "freebusy_gap", "no calendar was consulted"
+
+

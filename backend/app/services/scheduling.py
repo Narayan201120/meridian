@@ -248,29 +248,55 @@ class SchedulingService:
         if window_end.tzinfo is None:
             window_end = window_end.replace(tzinfo=timezone.utc)
 
-        # Use cached events first, fallback to live freebusy
-        raw_busy: list[dict[str, str]] = []
-        try:
-            raw_busy = await self.calendar.list_cached_events(user_id, window_start, window_end)
-            # If cache is empty and connection never synced, try live
-            connection = await self.calendar.get_connection(user_id)
-            is_stale = True
-            if connection and connection.last_synced_at:
-                last = connection.last_synced_at
-                if last.tzinfo is None:
-                    last = last.replace(tzinfo=timezone.utc)
-                is_stale = (datetime.now(timezone.utc) - last) > timedelta(minutes=15)
-            if (not raw_busy and is_stale) or (connection and is_stale and not raw_busy):
-                # Try live, fallback to cache on failure
-                try:
-                    raw_busy = await self.calendar.fetch_freebusy(user_id, window_start, window_end)
-                except HTTPException:
-                    pass
-            elif not raw_busy and connection is None:
+        # Cached events first; a live free/busy read only when the cache is
+        # empty and stale. An empty busy list means "no meetings", so a failed
+        # live read must never fall through as one: that returned
+        # calendar-backed suggestions over real meetings.
+        raw_busy = await self.calendar.list_cached_events(user_id, window_start, window_end)
+        connection = await self.calendar.get_connection(user_id)
+        is_stale = True
+        if connection and connection.last_synced_at:
+            last = connection.last_synced_at
+            if last.tzinfo is None:
+                last = last.replace(tzinfo=timezone.utc)
+            is_stale = (datetime.now(timezone.utc) - last) > timedelta(minutes=15)
+        if not raw_busy and is_stale:
+            if connection is None or connection.status != "active":
+                # No calendar to consult, so nothing here is calendar-derived.
+                # Refusing would break unconnected scheduling flows that never
+                # claimed a calendar basis, so return plain time picks labeled
+                # as such instead of the freebusy_gap claim below.
+                slots = find_free_slots(
+                    busy=[],
+                    time_min=window_start,
+                    time_max=window_end,
+                    duration=timedelta(minutes=duration),
+                    max_results=max_results,
+                )
+                blocks = [
+                    SuggestedBlock(
+                        suggested_start_at=start,
+                        suggested_end_at=end,
+                        reason={"kind": "no_calendar", "duration_minutes": duration},
+                    )
+                    for start, end in slots
+                ]
+                return duration, blocks
+            try:
                 raw_busy = await self.calendar.fetch_freebusy(user_id, window_start, window_end)
-        except HTTPException:
-            # If cache path fails, try live
-            raw_busy = await self.calendar.fetch_freebusy(user_id, window_start, window_end)
+            except HTTPException as exc:
+                if exc.status_code == status.HTTP_404_NOT_FOUND:
+                    # The connection went away between the two reads; the
+                    # 404 already refuses honestly, so let it through.
+                    raise
+                # fetch_freebusy fails as 401 (token refresh), 500/503
+                # (encryption config), or 502 (Google read). A 401 here would
+                # look like an API-auth failure, so report every live-read
+                # failure as a 502 naming the real cause.
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"Could not read calendar: {exc.detail}",
+                ) from exc
         busy_intervals = _parse_busy_intervals(raw_busy)
         slots = find_free_slots(
             busy=busy_intervals,
