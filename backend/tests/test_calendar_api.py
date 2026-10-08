@@ -561,11 +561,27 @@ async def test_dispatch_and_ack_reminder(client, db_session, auth_user_id, monke
 
     # A registered device and a stand-in transport are both required now:
     # dispatch marks a reminder sent only once a device actually accepted it.
+    # The device carries well-formed keys: deliver_reminder refuses keyless
+    # devices before calling the transport.
+    import base64
+    import os
+
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    _priv = ec.generate_private_key(ec.SECP256R1())
+    _pub = _priv.public_key().public_bytes(
+        encoding=serialization.Encoding.X962,
+        format=serialization.PublicFormat.UncompressedPoint,
+    )
+    _nopad = lambda raw: base64.urlsafe_b64encode(raw).rstrip(b"=").decode()  # noqa: E731
     device = Device(
         user_id=UUID(auth_user_id),
         platform="web",
         device_name="Test browser",
         push_token="https://push.example/dispatch",
+        push_p256dh=_nopad(_pub),
+        push_auth=_nopad(os.urandom(16)),
         last_seen_at=datetime.now(timezone.utc),
     )
     db_session.add(device)
@@ -575,7 +591,9 @@ async def test_dispatch_and_ack_reminder(client, db_session, auth_user_id, monke
         def __init__(self) -> None:
             self.sent: list[str] = []
 
-        async def send(self, *, subscription: str, payload: dict) -> str:
+        async def send(
+            self, *, subscription: str, payload: dict, p256dh: str | None = None, auth: str | None = None
+        ) -> str:
             self.sent.append(subscription)
             return "msg-dispatch"
 
@@ -759,5 +777,3 @@ class TestReturnToGuard:
     def test_trailing_slash_in_config_still_matches(self, monkeypatch):
         monkeypatch.setattr(settings, "cors_origins", ["http://localhost:8081/"])
         assert GoogleCalendarService._safe_return_to("http://localhost:8081/x") == "http://localhost:8081/x"
-
-

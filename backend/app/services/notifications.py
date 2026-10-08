@@ -12,6 +12,7 @@ routing and failure handling can be verified without a network.
 from __future__ import annotations
 
 import base64
+import binascii
 import json
 import logging
 import time
@@ -43,6 +44,28 @@ WEB_PUSH_PROVIDER = "web_push"
 #: Retrying these can never succeed.
 GONE_STATUSES = frozenset({404, 410})
 
+#: Hosts WebPushTransport is willing to POST push payloads to.
+#:
+#: This is a security control, not a formality: the push endpoint is a stored
+#: URL the server POSTs to on its own, so without this list a stored value
+#: could turn the server into a client for an arbitrary host (SSRF). The old
+#: `https://push.` prefix check looked like protection but rejected every real
+#: browser: an actual Chrome subscribed against this app's VAPID key mints its
+#: endpoint at fcm.googleapis.com, which has no `push.` prefix. Admitting a new
+#: push service means adding its host here, never loosening the check itself.
+ALLOWED_PUSH_HOSTS = frozenset(
+    {
+        "fcm.googleapis.com",  # Chrome / Chromium
+        "updates.push.services.mozilla.com",  # Firefox
+        "push.services.mozilla.com",  # Firefox (alternate)
+        "web.push.apple.com",  # Safari
+    }
+)
+
+#: Suffix for Edge push (Windows Notification Service): hosts vary by region
+#: (e.g. wns2-par02p.notify.windows.com), so the exact names cannot be listed.
+WNS_HOST_SUFFIX = ".notify.windows.com"
+
 
 class SubscriptionGoneError(Exception):
     """The push service no longer holds this subscription (HTTP 404 or 410).
@@ -69,6 +92,66 @@ def get_push_transport() -> "WebPushTransport":
     return transport
 
 
+def _b64url_decode(value: str | None, *, name: str) -> bytes:
+    """Decode a base64url subscription key, tolerating the missing padding.
+
+    Browsers emit unpadded base64url; padding is restored before decoding.
+    Raises ValueError on anything that cannot be a key.
+    """
+    if not value or not isinstance(value, str):
+        raise ValueError(f"push subscription key '{name}' is missing")
+    padded = value + "=" * (-len(value) % 4)
+    try:
+        return base64.urlsafe_b64decode(padded)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError(f"push subscription key '{name}' is not valid base64url") from exc
+
+
+def _decode_subscription_keys(p256dh: str | None, auth: str | None) -> tuple[bytes, bytes]:
+    """Decode and sanity-check a stored subscription's keys.
+
+    p256dh must be the 65-byte uncompressed P-256 point, auth the 16-byte
+    secret. Anything else can never decrypt, so it is rejected before any
+    POST rather than recorded as a phantom success.
+    """
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    receiver_key = _b64url_decode(p256dh, name="p256dh")
+    auth_secret = _b64url_decode(auth, name="auth")
+    if len(receiver_key) != 65 or receiver_key[0] != 0x04:
+        raise ValueError("push subscription key 'p256dh' is not a 65-byte uncompressed P-256 point")
+    if len(auth_secret) != 16:
+        raise ValueError("push subscription key 'auth' is not 16 bytes")
+    try:
+        ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), receiver_key)
+    except ValueError as exc:
+        raise ValueError("push subscription key 'p256dh' is not a valid P-256 point") from exc
+    return receiver_key, auth_secret
+
+
+def _encrypt_push_payload(*, plaintext: bytes, p256dh: str | None, auth: str | None) -> bytes:
+    """Encrypt a push body per RFC 8291 (aes128gcm) with the subscription's own keys.
+
+    http_ece mints a fresh ephemeral keypair and salt per call, so identical
+    payloads produce different ciphertext. Under aes128gcm the salt and the
+    sender's public key travel in the RFC 8188 header block inside the body
+    itself, so no extra headers beyond Content-Encoding are needed.
+    """
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    import http_ece
+
+    receiver_key, auth_secret = _decode_subscription_keys(p256dh, auth)
+    ephemeral_private_key = ec.generate_private_key(ec.SECP256R1())
+    return http_ece.encrypt(
+        plaintext,
+        private_key=ephemeral_private_key,
+        dh=receiver_key,
+        auth_secret=auth_secret,
+        version="aes128gcm",
+    )
+
+
 class WebPushTransport:
     """Sends via the Web Push HTTP API using VAPID."""
 
@@ -82,8 +165,20 @@ class WebPushTransport:
                 detail="Web Push is not configured. Set the VAPID keys and subject.",
             )
 
-    async def send(self, *, subscription: str, payload: dict) -> str:
-        """POST payload to the push endpoint. Returns the provider message id.
+    async def send(
+        self,
+        *,
+        subscription: str,
+        payload: dict,
+        p256dh: str | None = None,
+        auth: str | None = None,
+    ) -> str:
+        """POST an RFC 8291-encrypted payload to the push endpoint.
+
+        The payload is encrypted with the subscription's own keys before
+        POSTing: the `Content-Encoding: aes128gcm` header is only true when
+        the body really is aes128gcm ciphertext, otherwise the push service
+        accepts the message while no browser can decrypt it.
 
         Raises HTTPException on failure so the caller records it as a failed
         delivery rather than losing it.
@@ -92,13 +187,41 @@ class WebPushTransport:
 
         self.require_config()
         endpoint = subscription
-        if not endpoint.startswith("https://push."):
-            # Refuse anything that is not a genuine push service, so a stored
-            # value can never be used to make the server call an arbitrary host.
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported push endpoint.")
+        parsed = urlparse(endpoint)
+        host = (parsed.hostname or "").lower()
+        if parsed.scheme != "https":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Refused push endpoint: scheme must be https.",
+            )
+        if not host or parsed.username or parsed.password:
+            # No host, or credentials embedded in the URL: never a genuine
+            # push subscription, and credentials in a stored URL would leak
+            # them to logs and the delivery row.
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Refused push endpoint: URL must have a host and no credentials.",
+            )
+        if host not in ALLOWED_PUSH_HOSTS and not host.endswith(WNS_HOST_SUFFIX):
+            # Unknown host: the server must not POST a stored URL anywhere
+            # that is not a known push service. Exact-match the listed hosts so
+            # a lookalike such as fcm.googleapis.com.evil.test cannot pass.
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Refused push endpoint: host '{host}' is not a known push service.",
+            )
 
         headers = self._auth_headers(endpoint)
-        body = json.dumps(payload).encode()
+        try:
+            body = _encrypt_push_payload(
+                plaintext=json.dumps(payload).encode(), p256dh=p256dh, auth=auth
+            )
+        except ValueError as exc:
+            # Missing or malformed keys: nothing POSTed here could decrypt.
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot encrypt for this subscription ({exc}); the device must re-register.",
+            ) from exc
         async with httpx.AsyncClient(timeout=15) as client:
             response = await client.post(endpoint, content=body, headers=headers)
         if response.status_code in GONE_STATUSES:
@@ -141,11 +264,16 @@ async def register_device(
     platform: str,
     push_endpoint: str,
     device_name: str | None,
+    push_p256dh: str | None = None,
+    push_auth: str | None = None,
 ) -> Device:
     """Insert or refresh the device for this push endpoint.
 
     The endpoint is the natural key: a browser re-subscribing after a token
-    refresh should update the existing row, not accumulate duplicates.
+    refresh should update the existing row, not accumulate duplicates. The
+    subscription keys are stored alongside it -- and overwritten on refresh,
+    because the browser rotates them on re-subscribe and a stale key encrypts
+    for a point the browser no longer holds.
     """
     existing = await session.scalar(
         select(Device).where(Device.user_id == user_id, Device.push_token == push_endpoint)
@@ -153,6 +281,8 @@ async def register_device(
     now = datetime.now(timezone.utc)
     if existing is not None:
         existing.device_name = device_name
+        existing.push_p256dh = push_p256dh
+        existing.push_auth = push_auth
         existing.last_seen_at = now
         existing.updated_at = now
         await session.commit()
@@ -164,6 +294,8 @@ async def register_device(
         platform=platform,
         device_name=device_name,
         push_token=push_endpoint,
+        push_p256dh=push_p256dh,
+        push_auth=push_auth,
         last_seen_at=now,
     )
     session.add(device)
@@ -225,7 +357,27 @@ async def deliver_reminder(
         )
         session.add(delivery)
         try:
-            message_id = await transport.send(subscription=device.push_token, payload=payload)
+            _decode_subscription_keys(device.push_p256dh, device.push_auth)
+        except ValueError as exc:
+            # Registered before payload encryption, or holding corrupt keys:
+            # nothing POSTed here could decrypt, and the old code recorded
+            # such sends as success. Refuse loudly so the device re-registers
+            # instead of the user silently missing reminders.
+            delivery.status = NotificationDeliveryStatus.FAILED
+            delivery.error_message = (
+                "Device registered before payload encryption and holds no usable "
+                f"subscription keys ({exc}); the browser must re-register its push "
+                "subscription."
+            )[:500]
+            logger.warning("push delivery refused for device %s: %s", device.id, exc)
+            continue
+        try:
+            message_id = await transport.send(
+                subscription=device.push_token,
+                payload=payload,
+                p256dh=device.push_p256dh,
+                auth=device.push_auth,
+            )
         except SubscriptionGoneError as exc:
             delivery.status = NotificationDeliveryStatus.FAILED
             delivery.error_message = str(exc)[:500]

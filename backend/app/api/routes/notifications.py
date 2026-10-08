@@ -68,6 +68,8 @@ async def register_device(
         platform=payload.platform,
         push_endpoint=payload.push_subscription.endpoint,
         device_name=payload.device_name,
+        push_p256dh=payload.push_subscription.keys.p256dh,
+        push_auth=payload.push_subscription.keys.auth,
     )
     return DeviceRead(
         id=device.id,

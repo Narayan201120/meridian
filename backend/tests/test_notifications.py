@@ -54,7 +54,9 @@ class FakeTransport:
         self.error = error or HTTPException(status_code=502, detail="push endpoint rejected")
         self.sent: list[str] = []
 
-    async def send(self, *, subscription: str, payload: dict) -> str:
+    async def send(
+        self, *, subscription: str, payload: dict, p256dh: str | None = None, auth: str | None = None
+    ) -> str:
         if self.fail:
             raise self.error
         self.sent.append(subscription)
@@ -75,12 +77,31 @@ async def _seed_reminder(db_session, auth_user_id: str, *, minutes: int = 5) -> 
 
 
 async def _seed_device(db_session, auth_user_id: str, *, endpoint: str = "https://push.example/one") -> Device:
-    """A real device row, since dispatch fans out to whatever is registered."""
+    """A real device row, since dispatch fans out to whatever is registered.
+
+    Carries well-formed subscription keys: deliver_reminder refuses keyless
+    devices before calling the transport, so a keyless seed would pin the
+    refusal instead of the dispatch behaviour under test.
+    """
+    import base64
+    import os
+
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    public_bytes = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.X962,
+        format=serialization.PublicFormat.UncompressedPoint,
+    )
+    nopad = lambda raw: base64.urlsafe_b64encode(raw).rstrip(b"=").decode()  # noqa: E731
     device = Device(
         user_id=_user_id(auth_user_id),
         platform="web",
         device_name="Test browser",
         push_token=endpoint,
+        push_p256dh=nopad(public_bytes),
+        push_auth=nopad(os.urandom(16)),
         last_seen_at=datetime.now(timezone.utc),
     )
     db_session.add(device)

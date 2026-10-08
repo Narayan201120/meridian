@@ -308,11 +308,47 @@ async def logout() -> Response:
 # to drive the whole schedule-a-block-and-confirm-it flow, which needs a Google
 # Calendar connection and so would test mocking rather than dispatch.
 #
-# The push endpoint below passes WebPushTransport's `https://push.` prefix guard
-# and then fails DNS, so delivery is genuinely attempted and genuinely fails.
-# That failure is the evidence: a NotificationDelivery row exists, which can
-# only happen if the server reached a device on its own.
+# The push endpoint below is deliberately a host that passes WebPushTransport's
+# allowlist and then fails DNS, so delivery is genuinely attempted and genuinely
+# fails at the network. That failure is the evidence: a FAILED
+# NotificationDelivery row exists, which can only happen if the server reached
+# for a device on its own, with no browser open.
+#
+# It has to be an allowlisted host. An earlier version used
+# `https://push.e2e.invalid/...`, which only passed the old `https://push.`
+# prefix check; under the host allowlist it is now refused with a 400 before any
+# network call, and a test that never leaves the process proves much less about
+# a delivery path than one that does. The `notify.windows.com` suffix is the
+# only allowlisted rule that accepts a name which can be made unresolvable,
+# because real FCM and Mozilla hosts are exact matches.
 # ---------------------------------------------------------------------------
+
+
+def _seed_subscription_keys() -> tuple[str, str]:
+    """A well-formed subscriber keypair for the harness device.
+
+    Seeded because `deliver_reminder` refuses a device whose keys are missing
+    before it calls the transport. Without keys the harness device would be
+    refused at the key check, and the E2E test that waits for a delivery row
+    would be pinning "we declined to try" rather than "we tried and the network
+    failed". The keys are real so the payload is genuinely encrypted and the
+    POST is genuinely attempted; the DNS failure at the unresolvable host is
+    then the thing being observed.
+    """
+    import base64
+
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    public_bytes = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.X962,
+        format=serialization.PublicFormat.UncompressedPoint,
+    )
+    return (
+        base64.urlsafe_b64encode(public_bytes).rstrip(b"=").decode(),
+        base64.urlsafe_b64encode(secrets.token_bytes(16)).rstrip(b"=").decode(),
+    )
 
 
 @auth_router.post("/_e2e/expire-access-token")
@@ -349,6 +385,8 @@ async def seed_due_reminder() -> dict:
         session.add(task)
         await session.flush()
 
+        keys = _seed_subscription_keys()
+
         # A minute in the past, so it is due on the very next sweep.
         reminder = Reminder(
             user_id=UUID(SEED_USER_ID),
@@ -360,7 +398,9 @@ async def seed_due_reminder() -> dict:
         device = Device(
             user_id=UUID(SEED_USER_ID),
             platform=DevicePlatform.WEB,
-            push_token="https://push.e2e.invalid/subscription/never-resolves",
+            push_token="https://e2e-not-real.notify.windows.com/subscription/never-resolves",
+            push_p256dh=keys[0],
+            push_auth=keys[1],
         )
         session.add_all([reminder, device])
         await session.commit()

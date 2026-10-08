@@ -202,6 +202,12 @@ class Device(Base):
     )
     device_name: Mapped[str | None] = mapped_column(Text)
     push_token: Mapped[str | None] = mapped_column(Text)
+    # Web Push payload-encryption keys (RFC 8291), base64url as the browser
+    # sent them. Without these the server can only POST plaintext the browser
+    # cannot decrypt, so they must be stored alongside the endpoint -- and
+    # refreshed on re-subscribe, since the browser rotates them.
+    push_p256dh: Mapped[str | None] = mapped_column(Text)
+    push_auth: Mapped[str | None] = mapped_column(Text)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow, server_default=text("CURRENT_TIMESTAMP"))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow, server_default=text("CURRENT_TIMESTAMP"))

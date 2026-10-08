@@ -40,6 +40,8 @@ APPROVED = {
         "drop the fcm default left over from the stub that faked deliveries",
     "20261005300000_drop_false_transcribed_default.sql":
         "drop the transcribed default, since nothing transcribes anything",
+    "20261008000000_add_device_push_keys.sql":
+        "store the subscription keys Web Push encryption requires, so a delivery can be encrypted for the device instead of recorded as sent while nothing could decrypt it",
 }
 
 

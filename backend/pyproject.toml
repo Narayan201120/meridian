@@ -13,6 +13,7 @@ dependencies = [
   "cryptography>=44,<47",
   "fastapi>=0.115,<1.0",
   "httpx>=0.28,<1.0",
+  "http-ece>=1.2,<2.0",
   "greenlet>=3.0,<4.0",
   # VAPID signing for Web Push. Latest published is 1.9.x.
   "py-vapid>=1.9,<2.0",

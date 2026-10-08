@@ -40,6 +40,29 @@ def _user_id(auth_user_id: str) -> UUID:
     return UUID(auth_user_id)
 
 
+def _subscription_keys() -> tuple[str, str]:
+    """A fresh, well-formed subscriber keypair for seeding devices.
+
+    deliver_reminder refuses devices whose keys are missing or malformed
+    before calling the transport, so devices seeded for gone/transient
+    behaviour must carry keys that decode -- otherwise these tests would pin
+    the key refusal instead of the failure handling they were written for.
+    """
+    import base64
+    import os
+
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    public_bytes = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.X962,
+        format=serialization.PublicFormat.UncompressedPoint,
+    )
+    nopad = lambda raw: base64.urlsafe_b64encode(raw).rstrip(b"=").decode()  # noqa: E731
+    return nopad(public_bytes), nopad(os.urandom(16))
+
+
 def _past(minutes: int = 5) -> datetime:
     return datetime.now(timezone.utc) - timedelta(minutes=minutes)
 
@@ -58,11 +81,14 @@ async def _seed_reminder(db_session, auth_user_id: str) -> Reminder:
 
 
 async def _seed_device(db_session, auth_user_id: str, *, endpoint: str) -> Device:
+    p256dh, auth = _subscription_keys()
     device = Device(
         user_id=_user_id(auth_user_id),
         platform="web",
         device_name="Test browser",
         push_token=endpoint,
+        push_p256dh=p256dh,
+        push_auth=auth,
         last_seen_at=datetime.now(timezone.utc),
     )
     db_session.add(device)
@@ -89,7 +115,9 @@ class _ScriptedTransport:
         self.behavior = behavior
         self.calls: list[str] = []
 
-    async def send(self, *, subscription: str, payload: dict) -> str:
+    async def send(
+        self, *, subscription: str, payload: dict, p256dh: str | None = None, auth: str | None = None
+    ) -> str:
         self.calls.append(subscription)
         outcome = self.behavior.get(subscription, "ok")
         if isinstance(outcome, Exception):
@@ -225,7 +253,9 @@ class TestGoneRaceIsIdempotent:
             raise HTTPException(status_code=410, detail="gone")
 
         class RacyTransport:
-            async def send(self, *, subscription: str, payload: dict) -> str:
+            async def send(
+                self, *, subscription: str, payload: dict, p256dh: str | None = None, auth: str | None = None
+            ) -> str:
                 assert subscription == endpoint
                 return await racy_send(subscription=subscription, payload=payload)
 
@@ -278,5 +308,16 @@ class TestTransportSurfacesGone:
         monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
 
         with pytest.raises(SubscriptionGoneError) as excinfo:
-            await transport.send(subscription="https://push.example/x", payload={"title": "hi"})
+            # An allowlisted push-service host: this test pins gone-status
+            # surfacing, so the endpoint must pass validation and reach the
+            # fake client rather than be refused up front. Valid keys ride
+            # along so the send path is reached: this pins gone surfacing,
+            # not key handling.
+            p256dh, auth = _subscription_keys()
+            await transport.send(
+                subscription="https://fcm.googleapis.com/x",
+                payload={"title": "hi"},
+                p256dh=p256dh,
+                auth=auth,
+            )
         assert excinfo.value.status_code == status
