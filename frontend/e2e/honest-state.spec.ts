@@ -303,4 +303,60 @@ test.describe("a failed calendar write is reported, not swallowed", () => {
     await page.getByRole("tab", { name: "Scheduled", exact: true }).click();
     await expect(active(page).getByText(title)).toBeVisible();
   });
+
+  test("a 500 on the calendar block is visible while acting from the Due now tab", async ({ page, request }) => {
+    // Same setup as above, but the schedule action runs on the Due now tab,
+    // whose cards report through TasksContext. Before the fix the context
+    // message has no banner outside Home, so this assertion fails while the
+    // Home-tab version above passes.
+    const token = await fetchAccessToken(request);
+    const title = `E2E calendar-failure-tab-${Date.now().toString(36)}`;
+    const pastDueAt = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const created = await request.post(`${API_BASE_URL}/tasks`, {
+      headers: { Authorization: `Bearer ${token}` },
+      data: { title, status: "scheduled", due_at: pastDueAt },
+    });
+    expect(created.ok()).toBe(true);
+
+    await ensureSignedIn(page);
+
+    await page.route("**/api/v1/calendar/google/status", async (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ status: "active" }),
+      }),
+    );
+    await page.route("**/api/v1/tasks/*/blocks*", async (route) =>
+      route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "Google Calendar event creation failed: deliberate e2e failure" }),
+      }),
+    );
+
+    await page.reload();
+    await expect(page.getByText("Capture a task, then give it somewhere real to go.")).toBeVisible();
+
+    // Act from the Due now tab, not Home: the card below resolves inside the
+    // active tab only, so this is the context-notified TaskCardConnected path.
+    await page.getByRole("tab", { name: "Due now", exact: true }).click();
+    // Both Home's due-now strip and the Due now tab render this title (tab
+    // screens stay mounted and neither is aria-hidden), so scope to the last
+    // copy, which is the Due now tab's card: Home renders first in DOM order.
+    await expect(active(page).getByText(title).last()).toBeVisible();
+
+    const card = active(page)
+      .locator("div")
+      .filter({ hasText: title })
+      .filter({ has: active(page).locator('div[tabindex="0"]').filter({ hasText: "Suggest times" }) })
+      .last();
+    await card.locator('div[tabindex="0"]').filter({ hasText: "Suggest times" }).click();
+    const scheduleHere = taskAction(page, "Schedule here").first();
+    await expect(scheduleHere).toBeVisible();
+    await scheduleHere.click();
+
+    // The failure must be reported where the user is: on this tab.
+    await expect(active(page).getByText(/did not accept the event/)).toBeVisible();
+  });
 });
