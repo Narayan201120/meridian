@@ -16,7 +16,10 @@
  * checks a banner appeared would pass even if the misleading text rendered too.
  */
 
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+
+const API_BASE_URL = "http://127.0.0.1:8098/api/v1";
+const AUTH_TOKEN_URL = "http://127.0.0.1:8098/auth/v1/token?grant_type=password";
 
 const SIGN_IN_EMAIL = "e2e@meridian.test";
 const SIGN_IN_PASSWORD = "E2eTest1234!Test1234!";
@@ -45,6 +48,18 @@ async function ensureSignedIn(page: Page): Promise<void> {
   await page.getByPlaceholder("••••••••").fill(SIGN_IN_PASSWORD);
   await taskAction(page, /^Sign in$/).click();
   await expect(page.getByText(`Signed in as ${SIGN_IN_EMAIL}`)).toBeVisible();
+}
+
+/** Mints a bearer token through the GoTrue-compatible auth stub. */
+async function fetchAccessToken(request: APIRequestContext): Promise<string> {
+  const response = await request.post(AUTH_TOKEN_URL, {
+    headers: { apikey: "anything" },
+    data: { email: SIGN_IN_EMAIL, password: SIGN_IN_PASSWORD },
+  });
+  expect(response.ok()).toBe(true);
+  const body = (await response.json()) as { access_token?: string };
+  expect(typeof body.access_token).toBe("string");
+  return body.access_token!;
 }
 
 test.describe("a failed request must not look like an empty one", () => {
@@ -99,12 +114,20 @@ test.describe("a failed request must not look like an empty one", () => {
 });
 
 test.describe("a failed reminder read must not become a delivery promise", () => {
-  test("a failed reminder fetch never claims the user will be reminded", async ({ page }) => {
-    await ensureSignedIn(page);
+  test("a failed reminder fetch never claims the user will be reminded", async ({ page, request }) => {
+    // A scheduled task is required: TaskCardEditor only renders the promise
+    // line for status scheduled/due_now, so an inbox task makes the
+    // toHaveCount(0) assertion trivially true without exercising anything.
+    const token = await fetchAccessToken(request);
+    const title = `E2E reminder-failure-${Date.now().toString(36)}`;
+    const dueAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const created = await request.post(`${API_BASE_URL}/tasks`, {
+      headers: { Authorization: `Bearer ${token}` },
+      data: { title, status: "scheduled", due_at: dueAt },
+    });
+    expect(created.ok()).toBe(true);
 
-    await page.getByPlaceholder("Task title").fill(`E2E reminder-failure-${Date.now().toString(36)}`);
-    await taskAction(page, /^Add task$/).click();
-    await expect(page.getByText("Inbox is clear")).toHaveCount(0);
+    await ensureSignedIn(page);
 
     await page.route("**/api/v1/tasks/*/reminders*", async (route) =>
       route.fulfill({
@@ -114,11 +137,15 @@ test.describe("a failed reminder read must not become a delivery promise", () =>
       }),
     );
 
-    await page.getByRole("tab", { name: "Inbox", exact: true }).click();
+    await page.reload();
+    await expect(page.getByRole("tablist")).toBeVisible();
+    await page.getByRole("tab", { name: "Scheduled", exact: true }).click();
 
-    // The card opens the task editor, which is where this copy lives. The
-    // promise is the problem: "will remind at scheduled time" is a claim about
+    // The card renders the task editor inline, which is where this copy lives.
+    // The promise is the problem: "will remind at scheduled time" is a claim about
     // the future made from a request that failed.
+    await expect(active(page).getByText(title)).toBeVisible();
     await expect(page.getByText("will remind at scheduled time")).toHaveCount(0);
+    await expect(page.getByText("Reminder status unknown")).toBeVisible();
   });
 });

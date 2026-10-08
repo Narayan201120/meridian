@@ -65,7 +65,10 @@ export interface TaskCardEditorProps {
   taskEditorPriority: Task["priority"];
   taskEditorDuration: string;
   suggestions: SuggestedBlock[];
-  reminders: Reminder[];
+  // null means the reminder read failed, which is different from [] (the
+  // server answered and there are none). The card must not render the "will
+  // remind at scheduled time" promise from a read that failed.
+  reminders: Reminder[] | null;
   callbacks: TaskCardEditorCallbacks;
 }
 
@@ -125,7 +128,9 @@ export default function TaskCardEditor({
         </Text>
       ) : null}
 
-      {reminders.length > 0 ? (
+      {reminders === null ? (
+        <Text className="text-[12px] italic text-sandmuted dark:text-nightmuted mt-0.5">Reminder status unknown — could not reach the server.</Text>
+      ) : reminders.length > 0 ? (
         <View className="gap-1.5 mt-1">
           {reminders.map((r) => (
             <Text key={r.id} className={`text-[13px] font-semibold ${reminderTone(r.status)}`}>

@@ -15,7 +15,7 @@ type TasksContextValue = {
   /** True when `tasks` holds cached data because the most recent read failed. */
   isStale: boolean;
   calendarStatus: string | null;
-  remindersByTask: Record<string, Reminder[]>;
+  remindersByTask: Record<string, Reminder[] | null>;
   pendingReminders: Reminder[];
   /**
    * Exposed so an optimistic ack can drop a row the server has already settled.
@@ -38,7 +38,7 @@ export function TasksProvider({ children }: { children: React.ReactNode }) {
   /** True when `tasks` is showing cached data because the last read failed. */
   const [isStale, setIsStale] = useState(false);
   const [calendarStatus, setCalendarStatus] = useState<string | null>(null);
-  const [remindersByTask, setRemindersByTask] = useState<Record<string, Reminder[]>>({});
+  const [remindersByTask, setRemindersByTask] = useState<Record<string, Reminder[] | null>>({});
   const [pendingReminders, setPendingReminders] = useState<Reminder[]>([]);
 
   const loadRemindersForTasks = useCallback(async (nextTasks: Task[]) => {
@@ -48,23 +48,27 @@ export function TasksProvider({ children }: { children: React.ReactNode }) {
       setRemindersByTask({});
       return;
     }
-    try {
-      const entries = await Promise.all(
-        scheduled.map(async (t) => {
-          try {
-            const rems = await listReminders(t.id);
-            return [t.id, rems] as const;
-          } catch {
-            return [t.id, [] as Reminder[]] as const;
-          }
-        })
-      );
-      const next: Record<string, Reminder[]> = {};
-      for (const [id, rems] of entries) next[id] = rems;
-      setRemindersByTask(next);
-    } catch {
-      // ignore
-    }
+    // A failed read is stored as null, never as []. An empty array means "the
+    // server answered and this task has no reminders", which is the only basis
+    // for the card's "will remind at scheduled time" line. Storing [] on
+    // failure is what let a 500 render as a delivery promise.
+    //
+    // There is no outer try/catch here on purpose. Each per-task read catches
+    // its own failure, so Promise.all cannot reject and an outer catch would
+    // be dead code that suggests a failure path that no longer exists.
+    const entries = await Promise.all(
+      scheduled.map(async (t) => {
+        try {
+          const rems = await listReminders(t.id);
+          return [t.id, rems] as const;
+        } catch {
+          return [t.id, null] as const;
+        }
+      })
+    );
+    const next: Record<string, Reminder[] | null> = {};
+    for (const [id, rems] of entries) next[id] = rems;
+    setRemindersByTask(next);
   }, [authSession]);
 
   const refresh = useCallback(async () => {
@@ -167,7 +171,10 @@ export function TasksProvider({ children }: { children: React.ReactNode }) {
       const rems = await listReminders(taskId);
       setRemindersByTask((prev) => ({ ...prev, [taskId]: rems }));
     } catch {
-      // ignore
+      // Mark the read as failed rather than keeping the previous value. The
+      // previous value describes an earlier successful read, and rendering it
+      // after a failed refresh presents stale data as current.
+      setRemindersByTask((prev) => ({ ...prev, [taskId]: null }));
     }
   }, [authSession]);
 

@@ -80,6 +80,10 @@ export default function HomeTab() {
   }
 
   function renderTaskCard(task: Task) {
+    // Same contract as TaskCardConnected: a missing key was never fetched,
+    // null is a failed read and must not become [].
+    const cached = remindersByTask[task.id];
+    const reminders = cached === undefined ? [] : cached;
     return (
       <TaskCardEditor
         key={task.id}
@@ -94,7 +98,7 @@ export default function HomeTab() {
         taskEditorPriority={taskEditorPriority}
         taskEditorDuration={taskEditorDuration}
         suggestions={suggestionsByTask[task.id] ?? []}
-        reminders={remindersByTask[task.id] ?? []}
+        reminders={reminders}
         callbacks={{
           onOpenTaskEditor: () => handleOpenTaskEditor(task),
           onCloseTaskEditor: closeTaskEditor,

@@ -16,6 +16,13 @@ export default function TaskCardConnected({ task }: { task: Task }) {
     onFilterChange: () => {},
   });
 
+  // A missing key means this task was never fetched (only scheduled and
+  // due_now tasks are read), so there are no rows to show and the card
+  // renders nothing extra. null means the read failed and must reach the
+  // card as null: defaulting it to [] would reintroduce the promise lie.
+  const cached = remindersByTask[task.id];
+  const reminders = cached === undefined ? [] : cached;
+
   return (
     <TaskCardEditor
       task={task}
@@ -29,7 +36,7 @@ export default function TaskCardConnected({ task }: { task: Task }) {
       taskEditorPriority={m.taskEditorPriority}
       taskEditorDuration={m.taskEditorDuration}
       suggestions={m.suggestionsByTask[task.id] ?? []}
-      reminders={remindersByTask[task.id] ?? []}
+      reminders={reminders}
       callbacks={{
         onOpenTaskEditor: () => m.handleOpenTaskEditor(task),
         onCloseTaskEditor: m.closeTaskEditor,
