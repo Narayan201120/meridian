@@ -285,11 +285,26 @@ export function useTaskMutations(deps: UseTaskMutationsDeps) {
     setActiveTaskId(task.id);
     setActiveTaskAction("schedule");
     notify(null);
+    // Set only by the calendar-write catch below, so the fallback knows the
+    // local schedule it is about to write is NOT on Google Calendar. Nothing
+    // else may set it: any other failure must surface as its own error.
+    let calendarWriteFailed = false;
     try {
       if (tasksRuntime.isApiMode && calendarStatus === "active") {
         try {
           const created = await createTaskCalendarBlock(task.id, block);
           await confirmTaskCalendarBlock(task.id, created.id);
+        } catch {
+          // Any failure creating or confirming the block means no event
+          // reached Google Calendar. The backend's own no-connection error
+          // reads "No active calendar connection...", so matching on message
+          // wording cannot tell "calendar failed" from anything else and is
+          // not attempted: every failure of this write is treated the same.
+          // Fall through to the local-only schedule below so the user is not
+          // blocked, and report the split truth afterwards via `notify`.
+          calendarWriteFailed = true;
+        }
+        if (!calendarWriteFailed) {
           const refreshed = await listTasks();
           // A failed read here falls through to the PATCH fallback below, which
           // is fine: the block was already confirmed, so we know the new status
@@ -309,11 +324,6 @@ export function useTaskMutations(deps: UseTaskMutationsDeps) {
           setSuggestTaskId(null);
           refreshReminders(task.id);
           return;
-        } catch (blockError) {
-          const msg = describeTaskError(blockError);
-          if (!msg.toLowerCase().includes("calendar")) {
-            throw blockError;
-          }
         }
       }
       const nextTask = await updateTask(task.id, { status: "scheduled", due_at: block.suggested_start_at });
@@ -324,6 +334,9 @@ export function useTaskMutations(deps: UseTaskMutationsDeps) {
       setScheduleEditorTaskId(null);
       setScheduleEditorValue("");
       setSuggestTaskId(null);
+      if (calendarWriteFailed) {
+        notify("Scheduled in Meridian, but Google Calendar did not accept the event — it is not on your calendar.");
+      }
       refreshReminders(task.id);
     } catch (error) {
       notify(describeTaskError(error));

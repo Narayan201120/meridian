@@ -8,7 +8,10 @@
  * every query goes through `active(page)`.
  */
 
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+
+const API_BASE_URL = "http://127.0.0.1:8098/api/v1";
+const AUTH_TOKEN_URL = "http://127.0.0.1:8098/auth/v1/token?grant_type=password";
 
 const SIGN_IN_EMAIL = "e2e@meridian.test";
 const SIGN_IN_PASSWORD = "E2eTest1234!Test1234!";
@@ -31,6 +34,18 @@ async function ensureSignedIn(page: Page): Promise<void> {
   await page.getByPlaceholder("••••••••").fill(SIGN_IN_PASSWORD);
   await taskAction(page, /^Sign in$/).click();
   await expect(page.getByText(`Signed in as ${SIGN_IN_EMAIL}`)).toBeVisible();
+}
+
+/** Mints a bearer token through the GoTrue-compatible auth stub. */
+async function fetchAccessToken(request: APIRequestContext): Promise<string> {
+  const response = await request.post(AUTH_TOKEN_URL, {
+    headers: { apikey: "anything" },
+    data: { email: SIGN_IN_EMAIL, password: SIGN_IN_PASSWORD },
+  });
+  expect(response.ok()).toBe(true);
+  const body = (await response.json()) as { access_token?: string };
+  expect(typeof body.access_token).toBe("string");
+  return body.access_token!;
 }
 
 function apiTask(status: string) {
@@ -219,5 +234,73 @@ test.describe("calendar notices get their own banner, not the Reminders one", ()
     // an inner View inside the banner root, hence the two levels up.
     const banner = message.locator("xpath=../..");
     await expect(banner).toHaveCSS("background-color", "rgb(248, 250, 252)");
+  });
+});
+
+test.describe("a failed calendar write is reported, not swallowed", () => {
+  test("a 500 on the calendar block still schedules locally but says Google refused it", async ({ page, request }) => {
+    // A due-now task is required: the schedule action under test lives on the
+    // Home due-now strip, the only screen that renders the notify banner, so
+    // an inbox task would make the banner assertion trivially vacuous. A
+    // scheduled task with a past due_at activates into due_now on the next
+    // list read, which is what Home renders inline.
+    const token = await fetchAccessToken(request);
+    const title = `E2E calendar-failure-${Date.now().toString(36)}`;
+    const pastDueAt = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const created = await request.post(`${API_BASE_URL}/tasks`, {
+      headers: { Authorization: `Bearer ${token}` },
+      data: { title, status: "scheduled", due_at: pastDueAt },
+    });
+    expect(created.ok()).toBe(true);
+
+    await ensureSignedIn(page);
+
+    // The app believes a calendar is connected ...
+    await page.route("**/api/v1/calendar/google/status", async (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ status: "active" }),
+      }),
+    );
+    // ... but the write fails. The detail deliberately contains "calendar":
+    // the defect swallows any block error whose message contains that word, so
+    // a stub without it would pass even before the fix and prove nothing.
+    await page.route("**/api/v1/tasks/*/blocks*", async (route) =>
+      route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "Google Calendar event creation failed: deliberate e2e failure" }),
+      }),
+    );
+
+    await page.reload();
+    await expect(page.getByText("Capture a task, then give it somewhere real to go.")).toBeVisible();
+    await expect(active(page).getByText(title)).toBeVisible();
+
+    // The card is the innermost div holding both the title and the Suggest
+    // times pressable; page-level queries would resolve to another task's card
+    // because the E2E database is shared across specs.
+    const card = active(page)
+      .locator("div")
+      .filter({ hasText: title })
+      .filter({ has: active(page).locator('div[tabindex="0"]').filter({ hasText: "Suggest times" }) })
+      .last();
+    await card.locator('div[tabindex="0"]').filter({ hasText: "Suggest times" }).click();
+    // Page-level on purpose: only an expanded card renders Schedule here
+    // buttons, and this test expands exactly one, so no scoping is needed and
+    // the brittle card-descendant chain below cannot hide a real regression.
+    const scheduleHere = taskAction(page, "Schedule here").first();
+    await expect(scheduleHere).toBeVisible();
+    await scheduleHere.click();
+
+    // Before the fix this banner never appears: the block error is swallowed
+    // and the local-only schedule reports success by saying nothing.
+    await expect(active(page).getByText(/did not accept the event/)).toBeVisible();
+
+    // The user is not blocked: the task really was scheduled locally, so it
+    // moved to the Scheduled tab.
+    await page.getByRole("tab", { name: "Scheduled", exact: true }).click();
+    await expect(active(page).getByText(title)).toBeVisible();
   });
 });
