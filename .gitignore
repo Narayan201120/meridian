@@ -27,6 +27,11 @@ frontend/playwright-report/
 # migration run and must never be committed.
 backend/migration_backup_*.json
 
+# Browser profile the real-push verification script reuses. It holds the push
+# subscription, which is why it is not deleted between runs; it is machine-local
+# state and must never be committed.
+frontend/.push-probe-profile/
+
 # SQLite database the E2E harness creates. It is rebuilt from scratch on every
 # `bun run e2e:live`, holds no real user data, and must never be committed.
 backend/e2e.db
