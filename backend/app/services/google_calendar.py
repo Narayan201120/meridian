@@ -223,7 +223,10 @@ class GoogleCalendarService:
 
     async def get_valid_access_token(self, connection: CalendarConnection) -> str:
         now = datetime.now(timezone.utc)
-        is_expired = connection.token_expires_at is None or connection.token_expires_at <= now + timedelta(seconds=60)
+        expires_at = connection.token_expires_at
+        if expires_at is not None and expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        is_expired = expires_at is None or expires_at <= now + timedelta(seconds=60)
         if not is_expired:
             token = self._decrypt(connection.access_token_ciphertext)
             if token:
