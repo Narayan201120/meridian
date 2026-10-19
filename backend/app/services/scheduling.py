@@ -93,13 +93,14 @@ async def run_due_sweep(session: AsyncSession) -> DueSweep:
         delivered += len(await scheduling.dispatch_due_reminders(user_id=user_id))
 
     task_service = TaskService(session)
+    tasks_activated = 0
     for user_id in task_user_ids:
-        await task_service.activate_due_tasks(user_id)
+        tasks_activated += await task_service.activate_due_tasks(user_id)
 
     return DueSweep(
         users_with_due_reminders=len(reminder_user_ids),
         reminders_delivered=delivered,
-        tasks_activated=len(task_user_ids),
+        tasks_activated=tasks_activated,
     )
 
 

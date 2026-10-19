@@ -47,7 +47,7 @@ async def _due_work_loop() -> None:
                 result = await run_due_sweep(session)
             if result.reminders_delivered or result.tasks_activated:
                 logger.info(
-                    "due sweep delivered %s reminder(s) and activated tasks for %s user(s)",
+                    "due sweep delivered %s reminder(s) and activated %s task(s)",
                     result.reminders_delivered,
                     result.tasks_activated,
                 )

@@ -1,6 +1,10 @@
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
-from app.services.scheduling import find_free_slots
+import pytest
+
+from app.models.task import Task, TaskStatus
+from app.services.scheduling import DueSweep, find_free_slots, run_due_sweep
 
 
 def test_find_free_slots_empty_busy():
@@ -41,3 +45,26 @@ def test_find_free_slots_merges_overlapping():
     ]
     slots = find_free_slots(busy=busy, time_min=time_min, time_max=time_max, duration=timedelta(minutes=30), max_results=2)
     assert slots[0] == (datetime(2026, 8, 24, 11, 0, tzinfo=timezone.utc), datetime(2026, 8, 24, 11, 30, tzinfo=timezone.utc))
+
+
+@pytest.mark.asyncio
+async def test_run_due_sweep_counts_tasks_not_users(db_session):
+    user_id = uuid4()
+    now = datetime.now(timezone.utc)
+    past = now - timedelta(minutes=5)
+    for i in range(2):
+        db_session.add(
+            Task(
+                user_id=user_id,
+                title=f"due task {i}",
+                status=TaskStatus.SCHEDULED,
+                due_at=past,
+            )
+        )
+    await db_session.commit()
+
+    result = await run_due_sweep(db_session)
+
+    assert isinstance(result, DueSweep)
+    # Two due tasks for one user must report two tasks, not one user.
+    assert result.tasks_activated == 2

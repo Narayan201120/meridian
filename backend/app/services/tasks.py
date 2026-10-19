@@ -179,7 +179,7 @@ class TaskService:
         if status_value != TaskStatus.COMPLETED:
             task.completed_at = None
 
-    async def activate_due_tasks(self, user_id: UUID) -> None:
+    async def activate_due_tasks(self, user_id: UUID) -> int:
         """Flip scheduled tasks whose time has arrived into due_now.
 
         Public because the server-side sweep calls it for every user, not only
@@ -193,7 +193,7 @@ class TaskService:
         )
 
         if not due_tasks:
-            return
+            return 0
 
         for task in due_tasks:
             task.status = TaskStatus.DUE_NOW
@@ -211,6 +211,7 @@ class TaskService:
             )
 
         await self.session.commit()
+        return len(due_tasks)
 
     async def _write_mutation_log(
         self,
