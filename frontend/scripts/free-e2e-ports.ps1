@@ -16,9 +16,9 @@ $ErrorActionPreference = "SilentlyContinue"
 # uvicorn was demonstrably serving on it. The port table lies here; an actual
 # request does not.
 $targets = @(
-  @{ Port = 8098; Path = "/api/v1/health" },
-  @{ Port = 8099; Path = "/" },
-  @{ Port = 8097; Path = "/" }
+  @{ Port = [int]($env:MERIDIAN_E2E_BACKEND_PORT ?? 8098); Path = "/api/v1/health" },
+  @{ Port = [int]($env:MERIDIAN_E2E_FRONTEND_PORT ?? 8099); Path = "/" },
+  @{ Port = [int]($env:MERIDIAN_E2E_DEMO_PORT ?? 8097); Path = "/" }
 )
 
 $busy = @()

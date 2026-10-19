@@ -65,10 +65,12 @@ export interface TaskCardEditorProps {
   taskEditorPriority: Task["priority"];
   taskEditorDuration: string;
   suggestions: SuggestedBlock[];
-  // null means the reminder read failed, which is different from [] (the
-  // server answered and there are none). The card must not render the "will
-  // remind at scheduled time" promise from a read that failed.
-  reminders: Reminder[] | null;
+  // Three distinct states, not two. `null` means the reminder read failed,
+  // `undefined` means it has not happened yet, and `[]` means the server
+  // answered and there are none. Collapsing `undefined` into `[]` at the call
+  // sites rendered "will remind at scheduled time" for the whole duration of a
+  // network round trip, which is the same false promise a 500 used to make.
+  reminders: Reminder[] | null | undefined;
   callbacks: TaskCardEditorCallbacks;
 }
 
@@ -130,6 +132,15 @@ export default function TaskCardEditor({
 
       {reminders === null ? (
         <Text className="text-[12px] italic text-sandmuted dark:text-nightmuted mt-0.5">Reminder status unknown — could not reach the server.</Text>
+      ) : reminders === undefined ? (
+        // No entry means the task's reminders were never read. Only scheduled
+        // and due_now tasks are fetched, so on anything else this is not a
+        // pending read and there is nothing to say. Showing nothing for a
+        // scheduled task here would read as "no reminder"; the promise would
+        // claim one exists. Say the thing that is actually true.
+        task.status === "scheduled" || task.status === "due_now" ? (
+          <Text className="text-[12px] italic text-sandmuted dark:text-nightmuted mt-0.5">Checking for reminders…</Text>
+        ) : null
       ) : reminders.length > 0 ? (
         <View className="gap-1.5 mt-1">
           {reminders.map((r) => (
@@ -139,6 +150,7 @@ export default function TaskCardEditor({
           ))}
         </View>
       ) : task.status === "scheduled" || task.status === "due_now" ? (
+        // Reached only with a genuine [] from a successful read.
         <Text className="text-[12px] italic text-sandmuted dark:text-nightmuted mt-0.5">No reminder yet — will remind at scheduled time.</Text>
       ) : null}
 

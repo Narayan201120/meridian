@@ -4,7 +4,9 @@ import { expect, test as base, type APIRequestContext, type Page } from "@playwr
  * Live-API suite: the same product paths as flow.spec.ts, but against the
  * real backend that playwright.config.ts boots (backend/e2e_server.py on
  * 127.0.0.1:8098, Expo web on localhost:8099, with a GoTrue-compatible auth
- * stub on the same origin so sign-in works with no Supabase project).
+ * stub on the same origin so sign-in works with no Supabase project). The
+ * backend port follows MERIDIAN_E2E_BACKEND_PORT when set; see the constants
+ * below.
  *
  * Failure modes this suite exists to catch, in the order they matter:
  *
@@ -20,8 +22,9 @@ import { expect, test as base, type APIRequestContext, type Page } from "@playwr
  * swallowed module-eval throw is exactly how the blank screen presented.
  */
 
-const API_BASE_URL = "http://127.0.0.1:8098/api/v1";
-const AUTH_TOKEN_URL = "http://127.0.0.1:8098/auth/v1/token?grant_type=password";
+const BACKEND_ORIGIN = `http://127.0.0.1:${process.env.MERIDIAN_E2E_BACKEND_PORT ?? 8098}`;
+const API_BASE_URL = `${BACKEND_ORIGIN}/api/v1`;
+const AUTH_TOKEN_URL = `${BACKEND_ORIGIN}/auth/v1/token?grant_type=password`;
 
 const SIGN_IN_EMAIL = "e2e@meridian.test";
 const SIGN_IN_PASSWORD = "E2eTest1234!Test1234!";

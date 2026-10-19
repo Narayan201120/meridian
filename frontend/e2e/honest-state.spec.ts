@@ -10,8 +10,10 @@
 
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 
-const API_BASE_URL = "http://127.0.0.1:8098/api/v1";
-const AUTH_TOKEN_URL = "http://127.0.0.1:8098/auth/v1/token?grant_type=password";
+// Same port override as playwright.config.ts, so two suites can run at once.
+const BACKEND_ORIGIN = `http://127.0.0.1:${process.env.MERIDIAN_E2E_BACKEND_PORT ?? 8098}`;
+const API_BASE_URL = `${BACKEND_ORIGIN}/api/v1`;
+const AUTH_TOKEN_URL = `${BACKEND_ORIGIN}/auth/v1/token?grant_type=password`;
 
 const SIGN_IN_EMAIL = "e2e@meridian.test";
 const SIGN_IN_PASSWORD = "E2eTest1234!Test1234!";

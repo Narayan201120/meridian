@@ -161,6 +161,15 @@ test.describe("scheduling from the inbox", () => {
 
     await openTab(page, "Scheduled");
     await expect(active(page).getByText(taskTitle)).toBeVisible();
+
+    // The reminder line must settle. Demo mode always answers "no reminders",
+    // so a card left on "Checking for reminders…" would be claiming that work
+    // is in progress which will never happen -- a permanent pending state in
+    // place of the old false promise. Asserted page-wide because the demo
+    // Scheduled list renders the card text without the pressable wrapper the
+    // Inbox uses, so a tabindex-scoped locator finds nothing here.
+    await expect(page.getByText("Checking for reminders")).toHaveCount(0);
+    await expect(page.getByText("No reminder yet").first()).toBeVisible();
   });
 
   test("9. orders Scheduled by activation time, ascending", async ({ page }) => {

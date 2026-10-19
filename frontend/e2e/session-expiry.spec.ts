@@ -26,7 +26,8 @@ import { expect, test as base, type Page } from "@playwright/test";
  * a test.
  */
 
-const HARNESS = "http://127.0.0.1:8098";
+// Same port override as playwright.config.ts, so two suites can run at once.
+const HARNESS = `http://127.0.0.1:${process.env.MERIDIAN_E2E_BACKEND_PORT ?? 8098}`;
 const SIGN_IN_EMAIL = "e2e@meridian.test";
 const SIGN_IN_PASSWORD = "E2eTest1234!Test1234!";
 

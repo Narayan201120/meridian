@@ -20,7 +20,9 @@ import { defineConfig, devices } from "@playwright/test";
  * in this file: mixing the two modes in one run would let the demo assertions
  * quietly define what "working" means.
  */
-const PORT = 8097;
+// Overridable for the same reason as the live config: two suites running at once
+// must not fight over one socket. Default unchanged.
+const PORT = Number(process.env.MERIDIAN_E2E_DEMO_PORT ?? 8097);
 const BASE_URL = `http://localhost:${PORT}`;
 
 export default defineConfig({

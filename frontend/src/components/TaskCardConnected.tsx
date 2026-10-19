@@ -16,12 +16,12 @@ export default function TaskCardConnected({ task }: { task: Task }) {
     onFilterChange: () => {},
   });
 
-  // A missing key means this task was never fetched (only scheduled and
-  // due_now tasks are read), so there are no rows to show and the card
-  // renders nothing extra. null means the read failed and must reach the
-  // card as null: defaulting it to [] would reintroduce the promise lie.
-  const cached = remindersByTask[task.id];
-  const reminders = cached === undefined ? [] : cached;
+  // The three states stay distinct all the way to the card: `undefined` is a
+  // read that has not happened (the card says so), `null` is a failed read
+  // (the card says so), and `[]` is a successful read that found nothing (the
+  // card may then promise a reminder). Defaulting the missing key to [] is what
+  // rendered the promise while the first read was still in flight.
+  const reminders = remindersByTask[task.id];
 
   return (
     <TaskCardEditor

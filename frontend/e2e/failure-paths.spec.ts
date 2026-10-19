@@ -18,8 +18,12 @@
 
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 
-const API_BASE_URL = "http://127.0.0.1:8098/api/v1";
-const AUTH_TOKEN_URL = "http://127.0.0.1:8098/auth/v1/token?grant_type=password";
+// Derived from the same override playwright.config.ts boots the backend on, with
+// the same default. Hardcoding 8098 here meant the specs kept talking to the old
+// port after the config moved, and every request failed with ECONNREFUSED.
+const BACKEND_ORIGIN = `http://127.0.0.1:${process.env.MERIDIAN_E2E_BACKEND_PORT ?? 8098}`;
+const API_BASE_URL = `${BACKEND_ORIGIN}/api/v1`;
+const AUTH_TOKEN_URL = `${BACKEND_ORIGIN}/auth/v1/token?grant_type=password`;
 
 const SIGN_IN_EMAIL = "e2e@meridian.test";
 const SIGN_IN_PASSWORD = "E2eTest1234!Test1234!";
@@ -147,5 +151,73 @@ test.describe("a failed reminder read must not become a delivery promise", () =>
     await expect(active(page).getByText(title)).toBeVisible();
     await expect(page.getByText("will remind at scheduled time")).toHaveCount(0);
     await expect(page.getByText("Reminder status unknown")).toBeVisible();
+  });
+
+  /**
+   * The same false promise, one step earlier in time.
+   *
+   * "will remind at scheduled time" is only true once a reminder read has come
+   * back empty. Before the first read resolves there is no entry in
+   * `remindersByTask` at all, and the callers used to collapse that missing
+   * entry into `[]`, so the promise rendered for the whole network round trip.
+   *
+   * An assertion after the request settles cannot reach that state. The lever
+   * here is an unresolved route handler: the reminder request is held open, so
+   * the card stays in "never read" while the assertion runs. The test then
+   * releases the handler so the page can finish cleanly.
+   */
+  test("the promise line is absent while the reminder read is still in flight", async ({ page, request }) => {
+    const token = await fetchAccessToken(request);
+    const title = `E2E reminder-inflight-${Date.now().toString(36)}`;
+    const dueAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const created = await request.post(`${API_BASE_URL}/tasks`, {
+      headers: { Authorization: `Bearer ${token}` },
+      data: { title, status: "scheduled", due_at: dueAt },
+    });
+    expect(created.ok()).toBe(true);
+
+    await ensureSignedIn(page);
+
+    let releaseReminders!: () => void;
+    const heldOpen = new Promise<void>((resolve) => {
+      releaseReminders = resolve;
+    });
+    await page.route("**/api/v1/tasks/*/reminders*", async (route) => {
+      await heldOpen;
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([]),
+      });
+    });
+
+    try {
+      await page.reload();
+      await expect(page.getByRole("tablist")).toBeVisible();
+      await page.getByRole("tab", { name: "Scheduled", exact: true }).click();
+
+      // The E2E database is shared across the whole run, so other scheduled
+      // tasks from other tests are also on screen and may hold a reminder line
+      // of their own. Scope every assertion to the card that holds this test's
+      // unique title.
+      const myCard = active(page)
+        .locator("div")
+        .filter({ has: page.getByText(title, { exact: true }) });
+
+      // The card has to be on screen first. An absent card also has no promise
+      // line, and that version of this test would pass without exercising the
+      // pending-read path at all.
+      await expect(active(page).getByText(title)).toBeVisible();
+
+      // The defect: the promise is rendered while the read is in flight. An
+      // empty result was never received, so the app knows nothing yet.
+      await expect(myCard.filter({ hasText: "will remind at scheduled time" })).toHaveCount(0);
+
+      // Non-vacuity for the line above: the card is really showing its
+      // not-yet-read state, not merely hiding the reminder section.
+      await expect(myCard.filter({ hasText: "Checking for reminders" }).first()).toBeVisible();
+    } finally {
+      releaseReminders();
+    }
   });
 });

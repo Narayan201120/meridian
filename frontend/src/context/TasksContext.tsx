@@ -42,7 +42,12 @@ export function TasksProvider({ children }: { children: React.ReactNode }) {
   const [pendingReminders, setPendingReminders] = useState<Reminder[]>([]);
 
   const loadRemindersForTasks = useCallback(async (nextTasks: Task[]) => {
-    if (!tasksRuntime.isApiMode || authSession === null) return;
+    // In API mode a signed-out app has nobody to ask, so it must not claim to
+    // be checking. Demo mode is different: `listReminders` answers there (with
+    // []), and skipping the read would leave the map empty, which the card
+    // renders as "Checking for reminders…" forever -- a pending state claiming
+    // work that will never happen. So the read runs, it just has a local answer.
+    if (tasksRuntime.isApiMode && authSession === null) return;
     const scheduled = nextTasks.filter((t) => t.status === "scheduled" || t.status === "due_now");
     if (scheduled.length === 0) {
       setRemindersByTask({});
@@ -166,7 +171,12 @@ export function TasksProvider({ children }: { children: React.ReactNode }) {
   }, [authSession]);
 
   const refreshRemindersForTask = useCallback(async (taskId: string) => {
-    if (!tasksRuntime.isApiMode || authSession === null) return;
+    // Same reasoning as loadRemindersForTasks: demo mode answers locally ([]),
+    // so the read still runs. Bailing out there left a task that became
+    // scheduled after the initial load with no answer at all -- and since only
+    // API mode polls, it stayed unanswered, rendering "Checking for
+    // reminders…" forever.
+    if (tasksRuntime.isApiMode && authSession === null) return;
     try {
       const rems = await listReminders(taskId);
       setRemindersByTask((prev) => ({ ...prev, [taskId]: rems }));

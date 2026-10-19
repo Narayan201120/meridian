@@ -29,8 +29,18 @@ import { defineConfig, devices } from "@playwright/test";
  * tests assert against. Generating a private key here would mean committing one
  * to the repo, and real delivery belongs to the push suite, not this config.
  */
-const BACKEND_PORT = 8098;
-const FRONTEND_PORT = 8099;
+/**
+ * Ports are overridable so two suites can run at once.
+ *
+ * They were fixed at 8098/8099, which meant a second `playwright test` started
+ * while the first was still booting would fight over the same sockets and one
+ * run would abort with "already used" and no test output. That is fine when one
+ * person runs one suite, and it stops being fine the moment an agent needs to
+ * verify two independent changes in parallel. The defaults are unchanged, so
+ * nothing that does not set the variables behaves differently.
+ */
+const BACKEND_PORT = Number(process.env.MERIDIAN_E2E_BACKEND_PORT ?? 8098);
+const FRONTEND_PORT = Number(process.env.MERIDIAN_E2E_FRONTEND_PORT ?? 8099);
 const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`;
 const BASE_URL = `http://localhost:${FRONTEND_PORT}`;
 
@@ -136,7 +146,8 @@ export default defineConfig({
    * The backend comes first because Playwright starts these in array order and
    * the frontend bundle reads the API base URL at build time. The auth stub
    * lives on the backend origin rather than being a separate service, so
-   * `EXPO_PUBLIC_SUPABASE_URL` points at 8098 and both the login request and the
+   * `EXPO_PUBLIC_SUPABASE_URL` points at the backend origin (8098 unless the
+   * port override above is set) and both the login request and the
    * API request are same-origin. That removes CORS from the picture entirely,
    * which matters because CORS misconfiguration is an easy way to make an E2E
    * suite fail for reasons that have nothing to do with the app.

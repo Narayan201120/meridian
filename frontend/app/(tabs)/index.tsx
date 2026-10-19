@@ -80,10 +80,10 @@ export default function HomeTab() {
   }
 
   function renderTaskCard(task: Task) {
-    // Same contract as TaskCardConnected: a missing key was never fetched,
-    // null is a failed read and must not become [].
-    const cached = remindersByTask[task.id];
-    const reminders = cached === undefined ? [] : cached;
+    // Same contract as TaskCardConnected, all three states: a missing key is a
+    // read that has not happened, null is a failed read, and [] is a successful
+    // read that found nothing. Only [] earns the promise line.
+    const reminders = remindersByTask[task.id];
     return (
       <TaskCardEditor
         key={task.id}
