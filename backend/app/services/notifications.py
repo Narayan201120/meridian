@@ -172,13 +172,18 @@ class WebPushTransport:
         payload: dict,
         p256dh: str | None = None,
         auth: str | None = None,
-    ) -> str:
+    ) -> str | None:
         """POST an RFC 8291-encrypted payload to the push endpoint.
 
         The payload is encrypted with the subscription's own keys before
         POSTing: the `Content-Encoding: aes128gcm` header is only true when
         the body really is aes128gcm ciphertext, otherwise the push service
         accepts the message while no browser can decrypt it.
+
+        Returns the identifier the push service issued for the message, or
+        None when it issued none. `Location` is optional in RFC 8030, so "the
+        service accepted it and did not identify it" is a real outcome and
+        must stay distinguishable from "the service gave us an id".
 
         Raises HTTPException on failure so the caller records it as a failed
         delivery rather than losing it.
@@ -231,8 +236,18 @@ class WebPushTransport:
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail=f"Push service rejected the message: {response.text[:200]}",
             )
-        location = response.headers.get("location", "")
-        return location.rsplit("/", 1)[-1] if location else "delivered"
+        location = response.headers.get("location", "").strip()
+        if not location:
+            # Accepted, but the service did not say which message it accepted.
+            # Returning a word like "delivered" here would put a value in
+            # provider_message_id that no provider ever issued.
+            return None
+        # The id is the last path segment: FCM uses .../fcm/send/<id> and WNS
+        # .../<id>. A Location with no segment (a bare origin, or ".../")
+        # identifies nothing, so it is not an id either.
+        path = urlparse(location).path.rstrip("/")
+        identifier = path.rsplit("/", 1)[-1] if path else ""
+        return identifier or None
 
     def _auth_headers(self, endpoint: str) -> dict[str, str]:
         """Build the VAPID Authorization header for a push endpoint.

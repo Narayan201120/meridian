@@ -33,10 +33,20 @@ def vapid_configured(monkeypatch):
     monkeypatch.setattr(settings, "web_push_subject", "mailto:test@example.com")
 
 
+PROVIDER_MESSAGE_ID = "781955292738798962"
+
+
 class _FakePushResponse:
-    status_code = 200
+    """A push service answers 201 Created with a Location naming the message.
+
+    The header is the point: without it the transport has no id to report, and
+    a fake that omits it makes the accepted-endpoint tests pass on a value the
+    transport invented instead of one the service sent.
+    """
+
+    status_code = 201
     is_error = False
-    headers: dict = {}
+    headers = {"location": f"https://fcm.googleapis.com/fcm/send/{PROVIDER_MESSAGE_ID}"}
     text = ""
 
 
@@ -95,7 +105,7 @@ async def _assert_accepted(monkeypatch, vapid_configured, endpoint: str) -> None
     result = await WebPushTransport().send(
         subscription=endpoint, payload={"title": "hi"}, p256dh=p256dh, auth=auth
     )
-    assert result, "accepted endpoint should produce a provider message id"
+    assert result == PROVIDER_MESSAGE_ID, "the id must come from the service's Location header"
     assert _FakePushClient.last is not None and _FakePushClient.last.posts == [endpoint]
 
 
