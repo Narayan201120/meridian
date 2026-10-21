@@ -8,6 +8,7 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
+    "typecheck:tsrs": "node ./node_modules/@tsrs/wasm/bin/tsrs-wasm.js -p . --noEmit",
     "e2e": "bun run e2e:demo && bun run e2e:live",
     "e2e:demo": "playwright test -c playwright.demo.config.ts",
     "e2e:live": "playwright test -c playwright.config.ts",
@@ -38,6 +39,7 @@
   "devDependencies": {
     "@babel/plugin-proposal-decorators": "^8.0.2",
     "@playwright/test": "^1.63.0",
+    "@tsrs/wasm": "0.18.0-ts7.1.0-dev.20260929",
     "@types/react": "^19.0.0",
     "sharp": "^0.35.4",
     "typescript": "^5.0.0"

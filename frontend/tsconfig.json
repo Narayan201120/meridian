@@ -10,6 +10,7 @@
     "useDefineForClassFields": false,
     "strictPropertyInitialization": false,
     "target": "ES2017",
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    "types": ["node"]
   }
 }
