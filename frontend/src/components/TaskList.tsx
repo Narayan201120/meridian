@@ -1,3 +1,4 @@
+import { memo, useMemo } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
 import { Chip } from "./ui/Chip";
 import { Card } from "./ui/Card";
@@ -29,7 +30,7 @@ function getGroups(tasks: Task[], active: string) {
   return base.map((g) => ({ ...g, tasks: tasks.filter((t) => t.status === g.key) }));
 }
 
-export function TaskList({
+export const TaskList = memo(function TaskList({
   activeFilter,
   setActiveFilter,
   tasks = [],
@@ -42,7 +43,16 @@ export function TaskList({
   isLoading?: boolean;
   renderCard?: (t: Task) => React.ReactNode;
 }) {
-  const groups = getGroups(tasks, activeFilter);
+  const groups = useMemo(() => getGroups(tasks, activeFilter), [tasks, activeFilter]);
+  const counts = useMemo(() => {
+    const next: Record<string, number> = {};
+    for (const f of filters) next[f.key] = f.key === "all" ? tasks.length : 0;
+    for (const t of tasks) {
+      const current = next[t.status];
+      if (current !== undefined) next[t.status] = current + 1;
+    }
+    return next;
+  }, [tasks]);
   const render = renderCard ?? ((t: Task) => <TaskCardConnected key={t.id} task={t} />);
 
   return (
@@ -50,11 +60,11 @@ export function TaskList({
       <SectionHeader eyebrow="Task list" title="Shape the work" body="Meridian needs more than a raw list. Filter by task state, then work from a clearer execution view." />
       <View className="flex-row flex-wrap gap-2">
         {filters.map((f) => (
-          <Chip key={f.key} label={f.label} count={getCount(tasks, f.key)} active={activeFilter === f.key} onPress={() => setActiveFilter(f.key)} />
+          <Chip key={f.key} label={f.label} count={f.key === "all" ? tasks.length : (counts[f.key] ?? getCount(tasks, f.key))} active={activeFilter === f.key} onPress={() => setActiveFilter(f.key)} />
         ))}
       </View>
       {isLoading ? (
-        <View className="gap-3">
+        <View className="gap-3" aria-busy>
           <View className="flex-row items-center gap-2 py-1">
             <ActivityIndicator size="small" color="#09261E" />
             <Text className="text-bodytext text-[14px]">Loading tasks...</Text>
@@ -99,4 +109,4 @@ export function TaskList({
       ) : null}
     </Card>
   );
-}
+});

@@ -1,16 +1,19 @@
+import { memo } from "react";
 import { Tabs } from "expo-router";
-import { View } from "react-native";
-import { BellRing, CalendarClock, CircleCheck, House, Inbox } from "lucide-react-native";
+import { Platform, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { BellRing, CalendarClock, CircleCheck, House, Inbox } from "../../src/components/icons";
 import { TasksProvider, useTasksContext } from "../../src/context/TasksContext";
 import { StatusBanner } from "../../src/components/ui/StatusBanner";
 import { useTheme } from "../../src/context/ThemeContext";
 
 function tabIcon(Icon: typeof House) {
-  return ({ color, size }: { color: string; size: number }) => <Icon size={size} color={color} strokeWidth={1.5} />;
+  return ({ color, size }: { color: string; size: number }) => <Icon size={Math.min(size, 22)} color={color} />;
 }
 
-function ThemedTabs() {
+const ThemedTabs = memo(function ThemedTabs() {
   const { scheme } = useTheme();
+  const insets = useSafeAreaInsets();
   const dark = scheme === "dark";
   return (
     <Tabs
@@ -18,9 +21,14 @@ function ThemedTabs() {
         headerShown: false,
         tabBarActiveTintColor: dark ? "#E8D9B0" : "#09261E",
         tabBarInactiveTintColor: dark ? "#9AA79E" : "#64748B",
+        tabBarHideOnKeyboard: true,
+        tabBarLabelStyle: { fontSize: 11 },
+        tabBarItemStyle: { minHeight: 56, paddingVertical: 8 },
         tabBarStyle: {
           backgroundColor: dark ? "#14201B" : "#FFFDF8",
           borderTopColor: dark ? "#24352C" : "#E2E8F0",
+          minHeight: 56 + (Platform.OS === "ios" ? insets.bottom : 0),
+          paddingBottom: Platform.OS === "ios" ? insets.bottom : 8,
         },
       }}
     >
@@ -31,7 +39,7 @@ function ThemedTabs() {
         <Tabs.Screen name="completed" options={{ title: "Completed", tabBarIcon: tabIcon(CircleCheck) }} />
     </Tabs>
   );
-}
+});
 
 export default function TabsLayout() {
   return (
@@ -42,20 +50,11 @@ export default function TabsLayout() {
   );
 }
 
-// Reported once for every tab. TaskCardConnected mutations on the
-// Inbox/Scheduled/Due now/Completed tabs notify through
-// TasksContext.setErrorMessage, but no tab screen rendered that text: only
-// Home rendered its own local errorMessage, and Inbox read the context value
-// as a boolean. A banner here, above the tab screens, is seen from whichever
-// tab the user acted on, so a failed write cannot be filed where nobody looks.
-// Home keeps its own banners: they render Home-local state (useState in
-// index.tsx, including the signed-out copy), not this context value, so
-// removing them would hide Home-strip errors instead of deduplicating.
 function GlobalErrorBanner() {
   const { errorMessage } = useTasksContext();
   if (!errorMessage) return null;
   return (
-    <View className="w-full items-center px-4 pt-4">
+    <View className="w-full items-center px-4 sm:px-5 pt-4">
       <View className="w-full max-w-[720px] md:max-w-[840px] lg:max-w-[960px]">
         <StatusBanner variant="error" title="Current issue" message={errorMessage} />
       </View>

@@ -27,6 +27,18 @@ export function parseDateTimeInputValue(value: string) {
   return parsed.toISOString();
 }
 
+let cachedFormatter: Intl.DateTimeFormat | null = null;
+
+function getFormatter(): Intl.DateTimeFormat {
+  if (!cachedFormatter) {
+    cachedFormatter = new Intl.DateTimeFormat(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
+  }
+  return cachedFormatter;
+}
+
 export function formatTaskTime(value: string | null) {
   if (!value) {
     return "No time set";
@@ -37,8 +49,5 @@ export function formatTaskTime(value: string | null) {
     return value;
   }
 
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(parsed);
+  return getFormatter().format(parsed);
 }

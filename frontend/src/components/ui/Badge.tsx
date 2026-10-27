@@ -1,5 +1,4 @@
-import { useEffect, useRef } from "react";
-import { AccessibilityInfo, Animated, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import { cn } from "../../lib/cn";
 
 const tones: Record<string, { bg: string; text: string; dot: string; border: string; label: string }> = {
@@ -12,22 +11,6 @@ const tones: Record<string, { bg: string; text: string; dot: string; border: str
 
 export function Badge({ status, className }: { status: string; className?: string }) {
   const tone = tones[status] ?? tones["archived"]!;
-  const dotOpacity = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    let stopped = false;
-    void AccessibilityInfo.isReduceMotionEnabled().then((reduced) => {
-      if (stopped || reduced) {
-        dotOpacity.setValue(1);
-        return;
-      }
-      dotOpacity.setValue(0);
-      Animated.timing(dotOpacity, { toValue: 1, duration: 200, useNativeDriver: true }).start();
-    });
-    return () => {
-      stopped = true;
-    };
-  }, [status, dotOpacity]);
 
   return (
     <View
@@ -38,8 +21,8 @@ export function Badge({ status, className }: { status: string; className?: strin
         className
       )}
     >
-      <Animated.View key={status} style={{ opacity: dotOpacity }} className={cn("h-1.5 w-1.5 rounded-full", tone.dot)} />
-      <Text className={cn("text-[12px] font-sans-medium", tone.text)}>{tone.label}</Text>
+      <View className={cn("h-1.5 w-1.5 rounded-full", tone.dot)} />
+      <Text numberOfLines={1} className={cn("text-[12px] font-sans-medium", tone.text)}>{tone.label}</Text>
     </View>
   );
 }

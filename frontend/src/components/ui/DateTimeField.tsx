@@ -1,9 +1,11 @@
-import { useState } from "react";
+import { Suspense, lazy, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import DateTimePicker, { type DateTimePickerEvent } from "@react-native-community/datetimepicker";
+
+const NativePicker = lazy(() => import("@react-native-community/datetimepicker"));
 
 // Native date/time picker (web uses DateTimeField.web.tsx).
-// Value is an ISO string (or "" when unset).
+// The native picker module loads only after the user taps the field, so
+// scheduling UI costs nothing for users who never schedule.
 export function DateTimeField({
   label,
   value,
@@ -16,15 +18,18 @@ export function DateTimeField({
   const [step, setStep] = useState<"date" | "time" | null>(null);
   const [draft, setDraft] = useState<Date | null>(null);
 
-  const parsed = value ? new Date(value) : null;
-  const shown = parsed && !Number.isNaN(parsed.getTime()) ? parsed.toLocaleString() : "Pick a date and time";
+  const shown = useMemo(() => {
+    const parsed = value ? new Date(value) : null;
+    return parsed && !Number.isNaN(parsed.getTime()) ? parsed.toLocaleString() : "Pick a date and time";
+  }, [value]);
 
   function open() {
+    const parsed = value ? new Date(value) : null;
     setDraft(parsed && !Number.isNaN(parsed.getTime()) ? parsed : new Date());
     setStep("date");
   }
 
-  function onPick(event: DateTimePickerEvent, selected?: Date) {
+  function onPick(event: { type: string }, selected?: Date) {
     if (event.type === "dismissed") {
       setStep(null);
       return;
@@ -49,7 +54,9 @@ export function DateTimeField({
         <Text className="text-[15px] text-graphite dark:text-nighttext">{shown}</Text>
       </Pressable>
       {step !== null && draft !== null ? (
-        <DateTimePicker value={draft} mode={step} is24Hour onChange={onPick} />
+        <Suspense fallback={null}>
+          <NativePicker value={draft} mode={step} is24Hour onChange={onPick as any} />
+        </Suspense>
       ) : null}
     </View>
   );

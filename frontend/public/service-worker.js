@@ -1,17 +1,81 @@
-/* Meridian service worker: receives Web Push and shows a notification.
+/* Meridian service worker: Web Push plus offline caching.
  *
- * Kept deliberately small. The app polls for reminders while open, so this only
- * has to handle the case where the tab is closed, which is the whole point of
- * push: a reminder that only exists while you happen to be looking at the app is
- * not a reminder.
+ * Push handles the closed-tab case, the whole point of reminders. The fetch
+ * handler keeps the shell usable on weak connections: app shell cache-first,
+ * API network-first with a short timeout, fonts and images stale-while-revalidate.
  */
 
-self.addEventListener("install", () => {
-  self.skipWaiting();
+const SHELL_CACHE = "meridian-shell-v1";
+const RUNTIME_CACHE = "meridian-runtime-v1";
+const SHELL_URLS = ["/", "/index.html", "/favicon.ico", "/assets/icon.png"];
+
+self.addEventListener("install", (event) => {
+  event.waitUntil(
+    caches.open(SHELL_CACHE).then((cache) => cache.addAll(SHELL_URLS).catch(() => undefined)).then(() => self.skipWaiting()),
+  );
 });
 
 self.addEventListener("activate", (event) => {
-  event.waitUntil(self.clients.claim());
+  event.waitUntil(
+    caches.keys().then((keys) =>
+      Promise.all(keys.filter((k) => k !== SHELL_CACHE && k !== RUNTIME_CACHE).map((k) => caches.delete(k))),
+    ).then(() => self.clients.claim()),
+  );
+});
+
+self.addEventListener("fetch", (event) => {
+  const { request } = event;
+  if (request.method !== "GET") return;
+  const url = new URL(request.url);
+  if (url.origin !== self.location.origin) {
+    // Cross-origin fonts and images: serve stale, refresh in background.
+    if (request.destination === "font" || request.destination === "image") {
+      event.respondWith(
+        caches.open(RUNTIME_CACHE).then(async (cache) => {
+          const cached = await cache.match(request);
+          const network = fetch(request).then((res) => {
+            if (res.ok) void cache.put(request, res.clone());
+            return res;
+          }).catch(() => cached);
+          return cached || network;
+        }),
+      );
+    }
+    return;
+  }
+
+  // API: network first, fall back to cache, then fail fast.
+  if (url.pathname.startsWith("/api/")) {
+    event.respondWith(
+      fetch(request).then((res) => {
+        if (res.ok) {
+          const copy = res.clone();
+          void caches.open(RUNTIME_CACHE).then((cache) => cache.put(request, copy));
+        }
+        return res;
+      }).catch(() => caches.open(RUNTIME_CACHE).then((cache) => cache.match(request))),
+    );
+    return;
+  }
+
+  // App shell and static assets: cache first.
+  event.respondWith(
+    caches.match(request).then((cached) => {
+      if (cached) {
+        void fetch(request).then((res) => {
+          if (res.ok) void caches.open(RUNTIME_CACHE).then((cache) => cache.put(request, res));
+        }).catch(() => undefined);
+        return cached;
+      }
+      return fetch(request).then((res) => {
+        if (res.ok) {
+          const copy = res.clone();
+          void caches.open(RUNTIME_CACHE).then((cache) => cache.put(request, copy));
+        }
+        return res;
+      }).catch(() => caches.open(SHELL_CACHE).then((cache) => cache.match("/index.html")));
+    }),
+  );
 });
 
 self.addEventListener("push", (event) => {
@@ -34,8 +98,6 @@ self.addEventListener("push", (event) => {
     badge: "/favicon.ico",
   };
 
-  // showNotification is the promise-based form so we can catch a failure rather
-  // than leaving the push silently dropped.
   event.waitUntil(self.registration.showNotification(title, options));
 });
 

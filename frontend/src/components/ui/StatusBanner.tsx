@@ -1,5 +1,5 @@
 import { Pressable, Text, View } from "react-native";
-import { AlertCircle, CheckCircle2, Info } from "lucide-react-native";
+import { AlertCircle, CheckCircle2, Info } from "../icons";
 import { cn } from "../../lib/cn";
 
 export function StatusBanner({

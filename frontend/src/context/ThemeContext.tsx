@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { Appearance, Platform } from "react-native";
 import * as SecureStore from "expo-secure-store";
 
@@ -58,15 +58,17 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  function toggle() {
+  const toggle = useCallback(() => {
     setScheme((prev) => {
       const next: ColorScheme = prev === "dark" ? "light" : "dark";
       void store(next);
       return next;
     });
-  }
+  }, []);
 
-  return <ThemeContext.Provider value={{ scheme, toggle }}>{children}</ThemeContext.Provider>;
+  const value = useMemo(() => ({ scheme, toggle }), [scheme, toggle]);
+
+  return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }
 
 export function useTheme() {

@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { StatusBar, Text, View } from "react-native";
+import { Suspense, lazy, memo, useCallback, useMemo, useState } from "react";
+import { ActivityIndicator, StatusBar, Text, View } from "react-native";
 import { Link } from "expo-router";
 import { Reveal } from "../../src/components/ui/Reveal";
 import { Card } from "../../src/components/ui/Card";
@@ -7,7 +7,6 @@ import { SectionHeader } from "../../src/components/ui/SectionHeader";
 import { PageShell } from "../../src/components/ui/PageShell";
 import { StatusBanner } from "../../src/components/ui/StatusBanner";
 import { CreateTaskForm } from "../../src/components/CreateTaskForm";
-import { VoiceCaptureCard } from "../../src/components/VoiceCaptureCard";
 import { Hero } from "../../src/components/Hero";
 import { ModeStatus } from "../../src/components/ModeStatus";
 import { AuthCard } from "../../src/components/AuthCard";
@@ -21,15 +20,26 @@ import { tasksRuntime, type Task } from "../../src/lib/tasks";
 import { useTaskMutations } from "../../src/hooks/useTaskMutations";
 import { useTaskSync } from "../../src/hooks/useTaskSync";
 
-// Home tab — dashboard: hero, mode/auth, capture, banners, pending
-// reminders, and a due-now strip. Full lists live in their own tabs.
-function DueNowStrip({ tasks, isLoading, renderCard }: { tasks: Task[]; isLoading: boolean; renderCard: (t: Task) => React.ReactNode }) {
-  const due = tasks.filter((t) => t.status === "due_now");
+const VoiceCaptureCard = lazy(() =>
+  import("../../src/components/VoiceCaptureCard").then((m) => ({ default: m.VoiceCaptureCard })),
+);
+
+const DueNowStrip = memo(function DueNowStrip({ tasks, isLoading, renderCard }: { tasks: Task[]; isLoading: boolean; renderCard: (t: Task) => React.ReactNode }) {
+  const due = useMemo(() => tasks.filter((t) => t.status === "due_now"), [tasks]);
   return (
     <Card variant="floating" className="gap-4">
       <SectionHeader eyebrow="Needs attention" title="Due now" body="The most urgent work, inline. Everything else lives in its tab." />
       {isLoading ? (
-        <Text className="text-bodytext dark:text-nightmuted text-[14px]">Loading tasks...</Text>
+        <View className="gap-3" aria-busy>
+          <View className="flex-row items-center gap-2 py-1">
+            <ActivityIndicator size="small" color="#09261E" />
+            <Text className="text-bodytext dark:text-nightmuted text-[14px]">Loading tasks...</Text>
+          </View>
+          <View className="rounded-2xl bg-cardsurf border border-borderfaint p-4 gap-2">
+            <View className="h-4 rounded-full bg-borderfaint w-3/4" />
+            <View className="h-3 rounded-full bg-borderfaint w-1/2" />
+          </View>
+        </View>
       ) : due.length === 0 ? (
         <View className="bg-sandbg dark:bg-nightcard rounded-2xl p-4 border border-sandborder dark:border-nightborder gap-1">
           <Text className="text-ink dark:text-nighttext font-bold">Nothing is due right now</Text>
@@ -38,21 +48,17 @@ function DueNowStrip({ tasks, isLoading, renderCard }: { tasks: Task[]; isLoadin
       ) : (
         <View className="gap-3">{due.map((t) => renderCard(t))}</View>
       )}
-      <Link href="/(tabs)/due_now" className="text-[13px] font-bold text-primary">
+      <Link href="/(tabs)/due_now" className="min-h-[44px] justify-center text-[13px] font-bold text-primary">
         Open Due now tab →
       </Link>
     </Card>
   );
-}
+});
 
 export default function HomeTab() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const { authSession, authEmail, setAuthEmail, authPassword, setAuthPassword, isSigningIn, isSigningOut, handleSignIn, handleSignOut } = useAuth(setErrorMessage);
-  const { tasks, setTasks, isLoading, dueNotice, remindersByTask, pendingReminders, dispatchNotice, setDispatchNotice, setPendingReminders, loadTasks, refreshRemindersForTask, replaceTask } = useTaskSync(authSession, setErrorMessage);
-  // Calendar gets its own notice slot. It used to share dispatchNotice, so a
-  // calendar message ("Calendar synced — …" or "Finish connecting …")
-  // rendered inside a green banner titled "Reminders", and a reminder notice
-  // overwrote it and vice versa. setDispatchNotice is no longer passed down.
+  const { tasks, setTasks, isLoading, dueNotice, remindersByTask, pendingReminders, dispatchNotice, setPendingReminders, loadTasks, refreshRemindersForTask, replaceTask } = useTaskSync(authSession, setErrorMessage);
   const [calendarNotice, setCalendarNotice] = useState<string | null>(null);
   const { calendarStatus, isSyncing, isConnecting, handleSyncCalendar, handleConnectCalendar } = useCalendarSync(authSession, setErrorMessage, setCalendarNotice);
   const { state: pushState, message: pushMessage, isBusy: isPushBusy, enable: enablePush, disable: disablePush } = usePushNotifications();
@@ -65,31 +71,30 @@ export default function HomeTab() {
     handleSuggestBlocks, handleApplySuggestion,
   } = useTaskMutations({
     replaceTask,
-    removeTask: (id) => setTasks((prev) => prev.filter((x) => x.id !== id)),
-    refreshReminders: (id) => void refreshRemindersForTask(id),
+    removeTask: useCallback((id: string) => setTasks((prev) => prev.filter((x) => x.id !== id)), [setTasks]),
+    refreshReminders: useCallback((id: string) => void refreshRemindersForTask(id), [refreshRemindersForTask]),
     notify: setErrorMessage,
     calendarStatus,
     activeFilter: "all",
-    onFilterChange: () => {},
+    onFilterChange: useCallback(() => {}, []),
   });
 
-  async function handleSignOutAndClear() {
+  const handleSignOutAndClear = useCallback(async () => {
     await handleSignOut();
     setTasks([]);
     setCalendarNotice(null);
-  }
+  }, [handleSignOut, setTasks]);
 
-  function renderTaskCard(task: Task) {
-    // Same contract as TaskCardConnected, all three states: a missing key is a
-    // read that has not happened, null is a failed read, and [] is a successful
-    // read that found nothing. Only [] earns the promise line.
+  const renderTaskCard = useCallback((task: Task) => {
     const reminders = remindersByTask[task.id];
+    const suggestions = suggestionsByTask[task.id] ?? [];
+    const isActive = activeTaskId === task.id;
     return (
       <TaskCardEditor
         key={task.id}
         task={task}
-        isBusy={activeTaskId === task.id}
-        activeAction={activeTaskId === task.id ? activeTaskAction : null}
+        isBusy={isActive}
+        activeAction={isActive ? activeTaskAction : null}
         isEditingSchedule={scheduleEditorTaskId === task.id}
         isEditingTask={taskEditorTaskId === task.id}
         scheduleEditorValue={scheduleEditorValue}
@@ -97,7 +102,7 @@ export default function HomeTab() {
         taskEditorNotes={taskEditorNotes}
         taskEditorPriority={taskEditorPriority}
         taskEditorDuration={taskEditorDuration}
-        suggestions={suggestionsByTask[task.id] ?? []}
+        suggestions={suggestions}
         reminders={reminders}
         callbacks={{
           onOpenTaskEditor: () => handleOpenTaskEditor(task),
@@ -119,7 +124,9 @@ export default function HomeTab() {
         }}
       />
     );
-  }
+  }, [remindersByTask, suggestionsByTask, activeTaskId, activeTaskAction, scheduleEditorTaskId, taskEditorTaskId, scheduleEditorValue, taskEditorTitle, taskEditorNotes, taskEditorPriority, taskEditorDuration, handleOpenTaskEditor, closeTaskEditor, handleSaveTaskDetails, handleOpenScheduleEditor, closeScheduleEditor, handleSaveSchedule, handleUnscheduleTask, handleToggleTaskStatus, handleDeleteTask, handleSuggestBlocks, handleApplySuggestion, setScheduleEditorValue, setTaskEditorTitle, setTaskEditorNotes, setTaskEditorPriority, setTaskEditorDuration]);
+
+  const showAuth = tasksRuntime.isApiMode && authSession === null;
 
   return (
     <>
@@ -145,7 +152,7 @@ export default function HomeTab() {
             onSignOut={() => void handleSignOutAndClear()}
           />
 
-          {tasksRuntime.isApiMode && authSession === null ? (
+          {showAuth ? (
             <AuthCard
               authEmail={authEmail}
               setAuthEmail={setAuthEmail}
@@ -158,25 +165,18 @@ export default function HomeTab() {
           ) : (
             <>
               <CreateTaskForm />
-              <VoiceCaptureCard />
+              <Suspense fallback={null}>
+                <VoiceCaptureCard />
+              </Suspense>
 
               {errorMessage ? <StatusBanner variant="error" title="Current issue" message={errorMessage} /> : null}
 
               {dueNotice ? <StatusBanner variant="success" title="Due now" message={dueNotice} /> : null}
 
-              {/* Titled "Tasks", not "Reminders". This slot used to carry reminder dispatch
-                  notices and is now only ever written by the offline-sync path, so a
-                  banner labelled Reminders was claiming a delivery that had not
-                  happened. Same reason calendar got its own slot. */}
               {dispatchNotice ? <StatusBanner variant="success" title="Tasks" message={dispatchNotice} /> : null}
 
               {calendarNotice ? (
                 <StatusBanner
-                  // Only the sync producer reports a completed success. The
-                  // "finish connecting" producer is an instruction to do
-                  // something elsewhere, so it renders as info, never success.
-                  // This sniffs the producer copy in useCalendarSync (owned
-                  // elsewhere): if that copy changes, this must follow it.
                   variant={calendarNotice.startsWith("Calendar synced") ? "success" : "info"}
                   title="Calendar"
                   message={calendarNotice}
@@ -185,7 +185,7 @@ export default function HomeTab() {
 
               <PendingRemindersCard pending={pendingReminders} onAcked={(id) => setPendingReminders((prev) => prev.filter((x) => x.id !== id))} onError={(m) => setErrorMessage(m)} />
 
-              <Reveal once="home-due-now" delay={120}>
+              <Reveal once="home-due-now">
                 <DueNowStrip
                   tasks={tasks}
                   isLoading={isLoading}
@@ -195,9 +195,8 @@ export default function HomeTab() {
             </>
           )}
 
-          {tasksRuntime.isApiMode && authSession === null && errorMessage ? <StatusBanner variant="error" title="Current issue" message={errorMessage} /> : null}
+          {showAuth && errorMessage ? <StatusBanner variant="error" title="Current issue" message={errorMessage} /> : null}
         </PageShell>
     </>
   );
 }
-

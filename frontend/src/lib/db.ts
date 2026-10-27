@@ -1,48 +1,90 @@
-import { Database } from "@nozbe/watermelondb";
-import LokiJSAdapter from "@nozbe/watermelondb/adapters/lokijs";
-import { appSchema, tableSchema } from "@nozbe/watermelondb";
+import type { Task } from "./tasks";
 
-import TaskModel from "./models/Task";
+const TASKS_KEY = "meridian.tasks.cache.v1";
+const PENDING_KEY = "meridian.tasks.pending.v1";
 
-// Keep schema lean: only tasks for offline-first MVP, other tables (reminders, voice) can be added later without new file
-export const schema = appSchema({
-  version: 1,
-  tables: [
-    tableSchema({
-      name: "tasks",
-      columns: [
-        { name: "title", type: "string" },
-        { name: "notes", type: "string", isOptional: true },
-        { name: "status", type: "string" },
-        { name: "priority", type: "string" },
-        { name: "due_at", type: "string", isOptional: true },
-        { name: "estimated_duration_minutes", type: "number", isOptional: true },
-        { name: "user_id", type: "string", isOptional: true },
-        { name: "updated_at", type: "number", isOptional: true },
-        { name: "server_id", type: "string", isIndexed: true, isOptional: true },
-      ],
-    }),
-  ],
-});
-
-const adapter = new LokiJSAdapter({
-  schema,
-  useWebWorker: false,
-  useIncrementalIndexedDB: true,
-  dbName: "meridian",
-  onSetUpError: (error) => console.warn("[WatermelonDB] setup error", error),
-});
-
-export const database = new Database({
-  adapter,
-  modelClasses: [TaskModel],
-});
-
-// Helper to check if DB is available (e.g., web IndexedDB)
-export function isDbAvailable(): boolean {
+function getStorage(): Storage | null {
   try {
-    return !!database;
+    if (typeof localStorage !== "undefined") return localStorage;
   } catch {
-    return false;
+    return null;
   }
+  return null;
+}
+
+let memoryTasks: Task[] | null = null;
+let memoryPending: Task[] | null = null;
+
+export function readCachedTasksSync(): Task[] | null {
+  if (memoryTasks !== null) return memoryTasks;
+  const storage = getStorage();
+  if (!storage) return null;
+  try {
+    const raw = storage.getItem(TASKS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Task[];
+    if (!Array.isArray(parsed)) return null;
+    memoryTasks = parsed;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export async function readCachedTasks(): Promise<Task[] | null> {
+  return readCachedTasksSync();
+}
+
+export async function writeCachedTasks(tasks: Task[]): Promise<void> {
+  memoryTasks = tasks.slice(0, 200);
+  const storage = getStorage();
+  if (!storage) return;
+  try {
+    storage.setItem(TASKS_KEY, JSON.stringify(memoryTasks));
+  } catch {
+    // Quota or private mode. Memory copy still serves this session.
+  }
+}
+
+export async function appendCachedTask(task: Task): Promise<void> {
+  const current = readCachedTasksSync() ?? [];
+  const next = [task, ...current.filter((t) => t.id !== task.id)].slice(0, 200);
+  await writeCachedTasks(next);
+}
+
+export async function readPendingTasks(): Promise<Task[]> {
+  if (memoryPending !== null) return memoryPending;
+  const storage = getStorage();
+  if (!storage) return [];
+  try {
+    const raw = storage.getItem(PENDING_KEY);
+    if (!raw) {
+      memoryPending = [];
+      return [];
+    }
+    const parsed = JSON.parse(raw) as Task[];
+    memoryPending = Array.isArray(parsed) ? parsed : [];
+    return memoryPending;
+  } catch {
+    return [];
+  }
+}
+
+export async function writePendingTasks(tasks: Task[]): Promise<void> {
+  memoryPending = tasks;
+  const storage = getStorage();
+  if (!storage) return;
+  try {
+    storage.setItem(PENDING_KEY, JSON.stringify(tasks));
+  } catch {
+    // Best effort.
+  }
+}
+
+export async function clearPendingTasks(): Promise<void> {
+  await writePendingTasks([]);
+}
+
+export function isDbAvailable(): boolean {
+  return true;
 }

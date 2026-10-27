@@ -1,5 +1,4 @@
-import { useRef } from "react";
-import { AccessibilityInfo, ActivityIndicator, Animated, Pressable, Text } from "react-native";
+import { ActivityIndicator, Pressable, Text } from "react-native";
 import { cn } from "../../lib/cn";
 
 type Variant = "primary" | "secondary" | "ghost" | "destructive";
@@ -24,7 +23,7 @@ export function Button({
   children: string;
 } & React.ComponentProps<typeof Pressable>) {
   const base = "items-center justify-center rounded-xl flex-row gap-2 min-h-[44px] min-w-[44px] px-4";
-  const sizes = { sm: "h-9 px-3", md: "h-11 px-4" }[size];
+  const sizes = { sm: "min-h-[44px] px-3 py-2", md: "min-h-[44px] px-4 py-3" }[size];
   const variants: Record<Variant, string> = {
     primary: "bg-primary active:bg-primarypressed",
     secondary: "bg-secondarybtn active:bg-secondarybtnpressed",
@@ -38,27 +37,10 @@ export function Button({
     destructive: "text-redtext font-sans-bold",
   };
 
-  const scale = useRef(new Animated.Value(1)).current;
-
-  function pressIn() {
-    void AccessibilityInfo.isReduceMotionEnabled().then((reduced) => {
-      if (!reduced) {
-        Animated.timing(scale, { toValue: 0.97, duration: 90, useNativeDriver: true }).start();
-      }
-    });
-  }
-
-  function pressOut() {
-    Animated.timing(scale, { toValue: 1, duration: 140, useNativeDriver: true }).start();
-  }
-
   return (
     <Pressable
       disabled={disabled || loading}
-      onPressIn={pressIn}
-      onPressOut={pressOut}
       className={cn(base, sizes, variants[variant], (disabled || loading) && "opacity-60", className)}
-      style={{ transform: [{ scale }] }}
       {...props}
     >
       {loading ? <ActivityIndicator size="small" color={variant === "primary" ? "#FFF8EE" : "#27443E"} /> : null}

@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Text, View } from "react-native";
 import { Badge } from "./ui/Badge";
 import { Button } from "./ui/Button";
@@ -74,7 +75,7 @@ export interface TaskCardEditorProps {
   callbacks: TaskCardEditorCallbacks;
 }
 
-export default function TaskCardEditor({
+export default memo(function TaskCardEditor({
   task,
   isBusy,
   activeAction,
@@ -93,9 +94,9 @@ export default function TaskCardEditor({
   const busy = (action: string) => isBusy && activeAction === action;
 
   return (
-    <Card variant="floating" className="p-4 md:p-4 gap-3">
+    <Card variant="floating" className="p-4 sm:p-5 md:p-6 gap-3">
       <View className="flex-row items-center justify-between gap-3">
-        <Text className="flex-1 text-ink dark:text-nighttext text-[18px] leading-6 font-bold">{task.title}</Text>
+        <Text numberOfLines={2} className="flex-1 min-w-0 shrink text-ink dark:text-nighttext text-[17px] sm:text-[18px] leading-6 font-bold">{task.title}</Text>
         <Badge status={task.status} />
       </View>
 
@@ -220,4 +221,4 @@ export default function TaskCardEditor({
       ) : null}
     </Card>
   );
-}
+});

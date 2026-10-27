@@ -3,14 +3,19 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 export function PageShell({ children }: { children: React.ReactNode }) {
   return (
-    <SafeAreaView className="flex-1 bg-canvas dark:bg-night">
+    <SafeAreaView edges={["top", "left", "right"]} className="flex-1 bg-canvas dark:bg-night">
       <KeyboardAvoidingView
         className="flex-1"
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         keyboardVerticalOffset={Platform.OS === "ios" ? 64 : 0}
       >
-        <ScrollView contentContainerClassName="flex-grow items-center w-full" keyboardShouldPersistTaps="handled">
-          <View className="w-full max-w-[720px] md:max-w-[840px] lg:max-w-[960px] px-4 md:px-6 py-6 gap-6">{children}</View>
+        <ScrollView
+          contentContainerClassName="flex-grow items-center w-full"
+          contentContainerStyle={{ paddingBottom: 96 }}
+          keyboardShouldPersistTaps="handled"
+          removeClippedSubviews
+        >
+          <View className="w-full max-w-[720px] md:max-w-[840px] lg:max-w-[960px] px-4 sm:px-5 md:px-6 py-6 gap-6">{children}</View>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>

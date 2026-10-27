@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import { valueOr } from "../lib/loaded";
 import {
@@ -66,7 +66,7 @@ export function useTaskMutations(deps: UseTaskMutationsDeps) {
   const [suggestTaskId, setSuggestTaskId] = useState<string | null>(null);
   const [suggestionsByTask, setSuggestionsByTask] = useState<Record<string, SuggestedBlock[]>>({});
 
-  async function handleToggleTaskStatus(task: Task) {
+  const handleToggleTaskStatus = useCallback(async (task: Task) => {
     const nextStatus = task.status === "completed" ? "inbox" : "completed";
     const nextAction = task.status === "completed" ? "reopen" : "complete";
     setActiveTaskId(task.id);
@@ -81,9 +81,9 @@ export function useTaskMutations(deps: UseTaskMutationsDeps) {
       setActiveTaskId(null);
       setActiveTaskAction(null);
     }
-  }
+  }, [replaceTask, notify]);
 
-  async function handleDeleteTask(taskId: string) {
+  const handleDeleteTask = useCallback(async (taskId: string) => {
     setActiveTaskId(taskId);
     setActiveTaskAction("delete");
     notify(null);
@@ -96,26 +96,26 @@ export function useTaskMutations(deps: UseTaskMutationsDeps) {
       setActiveTaskId(null);
       setActiveTaskAction(null);
     }
-  }
+  }, [removeTask, notify]);
 
-  function handleOpenTaskEditor(task: Task) {
+  const handleOpenTaskEditor = useCallback((task: Task) => {
     setTaskEditorTaskId(task.id);
     setTaskEditorTitle(task.title);
     setTaskEditorNotes(task.notes ?? "");
     setTaskEditorPriority(task.priority);
     setTaskEditorDuration(task.estimated_duration_minutes?.toString() ?? "");
     notify(null);
-  }
+  }, [notify]);
 
-  function closeTaskEditor() {
+  const closeTaskEditor = useCallback(() => {
     setTaskEditorTaskId(null);
     setTaskEditorTitle("");
     setTaskEditorNotes("");
     setTaskEditorPriority("medium");
     setTaskEditorDuration("");
-  }
+  }, []);
 
-  async function handleSaveTaskDetails(task: Task) {
+  const handleSaveTaskDetails = useCallback(async (task: Task) => {
     const nextTitle = taskEditorTitle.trim();
     const durationInput = taskEditorDuration.trim();
     const estimatedDuration = durationInput ? Number(durationInput) : null;
@@ -148,20 +148,20 @@ export function useTaskMutations(deps: UseTaskMutationsDeps) {
       setActiveTaskId(null);
       setActiveTaskAction(null);
     }
-  }
+  }, [taskEditorTitle, taskEditorDuration, taskEditorNotes, taskEditorPriority, replaceTask, notify, closeTaskEditor]);
 
-  function handleOpenScheduleEditor(task: Task) {
+  const handleOpenScheduleEditor = useCallback((task: Task) => {
     setScheduleEditorTaskId(task.id);
     setScheduleEditorValue(formatDateTimeInputValue(task.due_at));
     notify(null);
-  }
+  }, [notify]);
 
-  function closeScheduleEditor() {
+  const closeScheduleEditor = useCallback(() => {
     setScheduleEditorTaskId(null);
     setScheduleEditorValue("");
-  }
+  }, []);
 
-  async function handleSaveSchedule(task: Task) {
+  const handleSaveSchedule = useCallback(async (task: Task) => {
     let dueAt: string | null = null;
     try {
       dueAt = parseDateTimeInputValue(scheduleEditorValue);
@@ -191,16 +191,29 @@ export function useTaskMutations(deps: UseTaskMutationsDeps) {
       setActiveTaskId(null);
       setActiveTaskAction(null);
     }
-  }
+  }, [scheduleEditorValue, replaceTask, activeFilter, onFilterChange, refreshReminders, notify]);
 
-  async function handleUnscheduleTask(task: Task) {
+  const cancelConfirmedBlocks = useCallback(async (task: Task) => {
+    if (!tasksRuntime.isApiMode) {
+      return;
+    }
+    const blocks = await listTaskCalendarBlocks(task.id);
+    for (const block of blocks) {
+      if (block.status !== "confirmed") {
+        continue;
+      }
+      const result = await cancelTaskCalendarBlock(task.id, block.id);
+      if (result.last_error_message) {
+        throw new Error(result.last_error_message);
+      }
+    }
+  }, []);
+
+  const handleUnscheduleTask = useCallback(async (task: Task) => {
     setActiveTaskId(task.id);
     setActiveTaskAction("unschedule");
     notify(null);
     try {
-      // Withdraw the calendar event before moving the task back, so the two
-      // cannot diverge if the block cancel fails. A stale event on the real
-      // calendar is worse than a task that stays scheduled.
       await cancelConfirmedBlocks(task);
       const nextTask = await updateTask(task.id, { status: "inbox", due_at: null });
       replaceTask(nextTask);
@@ -221,36 +234,9 @@ export function useTaskMutations(deps: UseTaskMutationsDeps) {
       setActiveTaskId(null);
       setActiveTaskAction(null);
     }
-  }
+  }, [cancelConfirmedBlocks, replaceTask, activeFilter, onFilterChange, refreshReminders, notify]);
 
-  /**
-   * Cancel every block that actually reached Google.
-   *
-   * Only confirmed blocks own a calendar event. If listing blocks fails, the
-   * error propagates and the task is left scheduled: unscheduling blind would
-   * strand an event on the real calendar. If Google refuses a delete, the
-   * backend leaves that block confirmed and returns an error, which also
-   * propagates so the task stays scheduled and matches the calendar, and the
-   * user can retry. A 200 with a last_error_message is treated the same way,
-   * so a future contract change cannot silently diverge again.
-   */
-  async function cancelConfirmedBlocks(task: Task) {
-    if (!tasksRuntime.isApiMode) {
-      return;
-    }
-    const blocks = await listTaskCalendarBlocks(task.id);
-    for (const block of blocks) {
-      if (block.status !== "confirmed") {
-        continue;
-      }
-      const result = await cancelTaskCalendarBlock(task.id, block.id);
-      if (result.last_error_message) {
-        throw new Error(result.last_error_message);
-      }
-    }
-  }
-
-  async function handleSuggestBlocks(task: Task) {
+  const handleSuggestBlocks = useCallback(async (task: Task) => {
     const isTogglingOff = suggestTaskId === task.id;
     if (isTogglingOff) {
       setSuggestTaskId(null);
@@ -261,9 +247,6 @@ export function useTaskMutations(deps: UseTaskMutationsDeps) {
     notify(null);
     setSuggestTaskId(task.id);
     try {
-      // Pass the task's own duration so demo mode matches the server, which
-      // falls back to the stored value when this is null. Leaving it out made
-      // the demo stub invent 30-minute blocks for a 45-minute task.
       const result = await suggestBlocks(task.id, {
         max_results: 3,
         duration_minutes: task.estimated_duration_minutes ?? undefined,
@@ -279,15 +262,12 @@ export function useTaskMutations(deps: UseTaskMutationsDeps) {
       setActiveTaskId(null);
       setActiveTaskAction(null);
     }
-  }
+  }, [suggestTaskId, notify]);
 
-  async function handleApplySuggestion(task: Task, block: SuggestedBlock) {
+  const handleApplySuggestion = useCallback(async (task: Task, block: SuggestedBlock) => {
     setActiveTaskId(task.id);
     setActiveTaskAction("schedule");
     notify(null);
-    // Set only by the calendar-write catch below, so the fallback knows the
-    // local schedule it is about to write is NOT on Google Calendar. Nothing
-    // else may set it: any other failure must surface as its own error.
     let calendarWriteFailed = false;
     try {
       if (tasksRuntime.isApiMode && calendarStatus === "active") {
@@ -295,21 +275,10 @@ export function useTaskMutations(deps: UseTaskMutationsDeps) {
           const created = await createTaskCalendarBlock(task.id, block);
           await confirmTaskCalendarBlock(task.id, created.id);
         } catch {
-          // Any failure creating or confirming the block means no event
-          // reached Google Calendar. The backend's own no-connection error
-          // reads "No active calendar connection...", so matching on message
-          // wording cannot tell "calendar failed" from anything else and is
-          // not attempted: every failure of this write is treated the same.
-          // Fall through to the local-only schedule below so the user is not
-          // blocked, and report the split truth afterwards via `notify`.
           calendarWriteFailed = true;
         }
         if (!calendarWriteFailed) {
           const refreshed = await listTasks();
-          // A failed read here falls through to the PATCH fallback below, which
-          // is fine: the block was already confirmed, so we know the new status
-          // either way. Treating "could not read" as "no such task" is what
-          // would be wrong here, and `valueOr` keeps that distinction.
           const updated = valueOr(refreshed, []).find((t) => t.id === task.id);
           if (updated) replaceTask(updated);
           else {
@@ -344,9 +313,9 @@ export function useTaskMutations(deps: UseTaskMutationsDeps) {
       setActiveTaskId(null);
       setActiveTaskAction(null);
     }
-  }
+  }, [calendarStatus, replaceTask, activeFilter, onFilterChange, refreshReminders, notify]);
 
-  return {
+  return useMemo(() => ({
     activeTaskId,
     activeTaskAction,
     scheduleEditorTaskId,
@@ -376,5 +345,12 @@ export function useTaskMutations(deps: UseTaskMutationsDeps) {
     handleUnscheduleTask,
     handleSuggestBlocks,
     handleApplySuggestion,
-  };
+  }), [
+    activeTaskId, activeTaskAction, scheduleEditorTaskId, scheduleEditorValue,
+    taskEditorTaskId, taskEditorTitle, taskEditorNotes, taskEditorPriority, taskEditorDuration,
+    suggestTaskId, suggestionsByTask,
+    handleToggleTaskStatus, handleDeleteTask, handleOpenTaskEditor, closeTaskEditor,
+    handleSaveTaskDetails, handleOpenScheduleEditor, closeScheduleEditor, handleSaveSchedule,
+    handleUnscheduleTask, handleSuggestBlocks, handleApplySuggestion,
+  ]);
 }

@@ -77,91 +77,39 @@ export const tasksRuntime = {
   isApiMode: authRuntime.isConfigured,
 };
 
-// WatermelonDB offline cache helpers (lean, no new file for sync logic)
-let dbAvailable: boolean | null = null;
-async function getDb() {
-  if (dbAvailable === false) return null;
-  try {
-    const { database } = await import("./db");
-    dbAvailable = true;
-    return database;
-  } catch {
-    dbAvailable = false;
-    return null;
-  }
-}
+// Lightweight offline cache. localStorage with an in-memory fallback, no native
+// DB. The old WatermelonDB stack (rxjs, lokijs, simdjson) cost ~500KB minified
+// for a cache that was best-effort and never read in demo mode.
+import { appendCachedTask, readCachedTasks, readPendingTasks, writeCachedTasks, writePendingTasks } from "./db";
 
 async function cacheTasks(tasks: Task[]) {
-  const db = await getDb();
-  if (!db) return;
   try {
-    await db.write(async () => {
-      const collection = db.get("tasks");
-      for (const t of tasks) {
-        const existing = await collection.query().fetch();
-        const found = existing.find((m: any) => m.serverId === t.id);
-        if (found) {
-          await found.update((m: any) => {
-            m.title = t.title;
-            m.notes = t.notes ?? "";
-            m.status = t.status;
-            m.priority = t.priority;
-            m.dueAt = t.due_at ?? "";
-            m.estimatedDurationMinutes = t.estimated_duration_minutes ?? null;
-            m.userId = t.user_id;
-            m.serverId = t.id;
-          });
-        } else {
-          await collection.create((m: any) => {
-            m.title = t.title;
-            m.notes = t.notes ?? "";
-            m.status = t.status;
-            m.priority = t.priority;
-            m.dueAt = t.due_at ?? "";
-            m.estimatedDurationMinutes = t.estimated_duration_minutes ?? null;
-            m.userId = t.user_id;
-            m.serverId = t.id;
-          });
-        }
-      }
-    });
+    const existing = (await readCachedTasks()) ?? [];
+    const byId = new Map(existing.map((t) => [t.id, t]));
+    for (const t of tasks) byId.set(t.id, t);
+    await writeCachedTasks([...byId.values()].slice(0, 200));
   } catch {
     // ignore cache errors
   }
 }
 
 async function getCachedTasks(): Promise<Task[] | null> {
-  const db = await getDb();
-  if (!db) return null;
   try {
-    const collection = db.get("tasks");
-    const models: any[] = await collection.query().fetch();
-    if (models.length === 0) return null;
-    return models.map((m) => ({
-      id: m.serverId || m.id,
-      user_id: m.userId || "cached-user",
-      title: m.title,
-      notes: m.notes || null,
-      status: m.status as TaskStatus,
-      priority: m.priority as TaskPriority,
-      due_at: m.dueAt || null,
-      estimated_duration_minutes: m.estimatedDurationMinutes ?? null,
-      created_at: new Date(m.updatedAt || Date.now()).toISOString(),
-      updated_at: new Date(m.updatedAt || Date.now()).toISOString(),
-    }));
+    const cached = await readCachedTasks();
+    if (!cached || cached.length === 0) return null;
+    return cached;
   } catch {
     return null;
   }
 }
 
 export async function pushPendingOfflineTasks(): Promise<number> {
-  const db = await getDb();
-  if (!db || !tasksRuntime.isApiMode) return 0;
+  if (!tasksRuntime.isApiMode) return 0;
   try {
-    const collection = db.get("tasks");
-    const models: any[] = await collection.query().fetch();
-    const pending = models.filter((m) => !m.serverId || String(m.serverId).startsWith("offline-") || String(m.id).startsWith("offline-"));
+    const pending = await readPendingTasks();
+    if (pending.length === 0) return 0;
     let pushed = 0;
+    const remaining: Task[] = [];
     for (const m of pending) {
       try {
         const payload: CreateTaskInput = {
@@ -169,8 +117,8 @@ export async function pushPendingOfflineTasks(): Promise<number> {
           notes: m.notes || undefined,
           status: (m.status as TaskStatus) === "scheduled" ? "scheduled" : "inbox",
           priority: m.priority as TaskPriority,
-          due_at: m.dueAt || null,
-          estimated_duration_minutes: m.estimatedDurationMinutes ?? null,
+          due_at: m.due_at || null,
+          estimated_duration_minutes: m.estimated_duration_minutes ?? null,
         };
         const res = await apiFetch(
           `${apiBaseUrl}/tasks`,
@@ -180,27 +128,28 @@ export async function pushPendingOfflineTasks(): Promise<number> {
             contentType: "application/json",
           },
         );
-        if (!res.ok) continue;
-        const created = (await res.json()) as Task;
-        await db.write(async () => {
-          await m.update((rec: any) => {
-            rec.serverId = created.id;
-            rec.userId = created.user_id;
-            rec.title = created.title;
-            rec.status = created.status;
-            rec.priority = created.priority;
-            rec.dueAt = created.due_at ?? "";
-            rec.estimatedDurationMinutes = created.estimated_duration_minutes ?? null;
-          });
-        });
+        if (!res.ok) {
+          remaining.push(m);
+          continue;
+        }
         pushed += 1;
       } catch {
-        // keep pending for next retry
+        remaining.push(m);
       }
     }
+    await writePendingTasks(remaining);
     return pushed;
   } catch {
     return 0;
+  }
+}
+
+async function queuePendingOfflineTask(task: Task): Promise<void> {
+  try {
+    const pending = await readPendingTasks();
+    await writePendingTasks([task, ...pending].slice(0, 100));
+  } catch {
+    // Best effort.
   }
 }
 
@@ -326,25 +275,51 @@ export async function apiFetch(
   url: string,
   init: { method?: string; body?: string; contentType?: string } = {},
 ): Promise<Response> {
-  const send = () =>
-    fetch(url, {
+  const FETCH_TIMEOUT_MS = 12_000;
+  const send = (attempt: number) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    return fetch(url, {
       method: init.method,
       headers: buildApiHeaders(init.contentType),
       ...(init.body === undefined ? {} : { body: init.body }),
+      signal: controller.signal,
+    }).finally(() => clearTimeout(timer)).catch((error) => {
+      // One retry on a stalled or dropped connection. 2G often aborts the
+      // first attempt while the radio wakes up. Anything else propagates.
+      if (attempt === 0 && (error instanceof DOMException && error.name === "AbortError" || error instanceof TypeError)) {
+        const retryController = new AbortController();
+        const retryTimer = setTimeout(() => retryController.abort(), FETCH_TIMEOUT_MS);
+        return fetch(url, {
+          method: init.method,
+          headers: buildApiHeaders(init.contentType),
+          ...(init.body === undefined ? {} : { body: init.body }),
+          signal: retryController.signal,
+        }).finally(() => clearTimeout(retryTimer));
+      }
+      throw error;
     });
+  };
 
-  const response = await send();
-  if (response.status !== 401) return response;
+  const first = await send(0);
+  // Retry once on a transient 502/503/504 before surfacing. These are the
+  // statuses a proxy returns during a deploy or a brief upstream flap.
+  if ((first.status === 502 || first.status === 503 || first.status === 504) && (init.method === undefined || init.method === "GET")) {
+    await new Promise((r) => setTimeout(r, 800));
+    const retry = await send(1);
+    if (retry.status !== 401) return retry;
+    const refreshed = await refreshAccessToken();
+    if (refreshed === null) return retry;
+    return send(1);
+  }
+  if (first.status !== 401) return first;
 
   const refreshed = await refreshAccessToken();
   if (refreshed === null) {
-    // Either refresh is impossible, or it already ended the session. Return the
-    // 401 rather than throwing, so each caller's existing error handling decides
-    // what a dead session means on that screen.
-    return response;
+    return first;
   }
 
-  return send();
+  return send(1);
 }
 
 /**
@@ -478,6 +453,8 @@ export async function createTask(input: CreateTaskInput): Promise<Task> {
       updated_at: now,
     };
     void cacheTasks([offlineTask]);
+    void appendCachedTask(offlineTask);
+    void queuePendingOfflineTask(offlineTask);
     return offlineTask;
   }
 

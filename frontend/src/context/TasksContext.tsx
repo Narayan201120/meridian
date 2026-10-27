@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
+import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from "react";
 import { getCurrentSession, onSessionLost, type AuthSession } from "../lib/auth";
 import { listAllReminders, listTasks, tasksRuntime, type Task } from "../lib/tasks";
 import { listReminders, type Reminder } from "../lib/tasks";
@@ -147,7 +147,14 @@ export function TasksProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!tasksRuntime.isApiMode || authSession === null) return;
-    const id = setInterval(() => void refresh(), 30_000);
+    // 60s, paused when the tab is hidden. Three 30s intervals used to fire
+    // while the user was looking at another tab, each one setting state and
+    // re-rendering every card.
+    const tick = () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      void refresh();
+    };
+    const id = setInterval(tick, 60_000);
     return () => clearInterval(id);
   }, [authSession, refresh]);
 
@@ -171,25 +178,22 @@ export function TasksProvider({ children }: { children: React.ReactNode }) {
   }, [authSession]);
 
   const refreshRemindersForTask = useCallback(async (taskId: string) => {
-    // Same reasoning as loadRemindersForTasks: demo mode answers locally ([]),
-    // so the read still runs. Bailing out there left a task that became
-    // scheduled after the initial load with no answer at all -- and since only
-    // API mode polls, it stayed unanswered, rendering "Checking for
-    // reminders…" forever.
     if (tasksRuntime.isApiMode && authSession === null) return;
     try {
       const rems = await listReminders(taskId);
-      setRemindersByTask((prev) => ({ ...prev, [taskId]: rems }));
+      setRemindersByTask((prev) => (prev[taskId] === rems ? prev : { ...prev, [taskId]: rems }));
     } catch {
-      // Mark the read as failed rather than keeping the previous value. The
-      // previous value describes an earlier successful read, and rendering it
-      // after a failed refresh presents stale data as current.
-      setRemindersByTask((prev) => ({ ...prev, [taskId]: null }));
+      setRemindersByTask((prev) => (prev[taskId] === null ? prev : { ...prev, [taskId]: null }));
     }
   }, [authSession]);
 
+  const value = useMemo(
+    () => ({ tasks, authSession, setAuthSession, isLoading, errorMessage, setErrorMessage, isStale, calendarStatus, remindersByTask, pendingReminders, setPendingReminders, refresh, setTasks, refreshRemindersForTask }),
+    [tasks, authSession, isLoading, errorMessage, isStale, calendarStatus, remindersByTask, pendingReminders, refresh, refreshRemindersForTask],
+  );
+
   return (
-    <TasksContext.Provider value={{ tasks, authSession, setAuthSession, isLoading, errorMessage, setErrorMessage, isStale, calendarStatus, remindersByTask, pendingReminders, setPendingReminders, refresh, setTasks, refreshRemindersForTask }}>
+    <TasksContext.Provider value={value}>
       {children}
     </TasksContext.Provider>
   );
