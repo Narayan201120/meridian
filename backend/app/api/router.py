@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from app.api.routes.calendar import router as calendar_router
 from app.api.routes.captures import router as captures_router
 from app.api.routes.health import router as health_router
+from app.api.routes.internal import router as internal_router
 from app.api.routes.notifications import router as notifications_router
 from app.api.routes.tasks import router as tasks_router
 
@@ -12,3 +13,4 @@ api_router.include_router(captures_router, prefix="/captures", tags=["captures"]
 api_router.include_router(calendar_router, prefix="/calendar", tags=["calendar"])
 api_router.include_router(tasks_router, prefix="/tasks", tags=["tasks"])
 api_router.include_router(notifications_router, prefix="", tags=["notifications"])
+api_router.include_router(internal_router, prefix="/internal", tags=["internal"])

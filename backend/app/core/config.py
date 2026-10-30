@@ -72,6 +72,12 @@ class Settings(BaseSettings):
     # can afford a short interval, while a fleet would want it long enough that
     # N sweeps do not all fire at once.
     reminder_dispatch_interval_seconds: int = 30
+    # False on a host that freezes the process between requests. The loop is then
+    # replaced by an external caller of POST /api/v1/internal/dispatch, and
+    # leaving both on would deliver the same reminder twice.
+    reminder_dispatch_enabled: bool = True
+    # Shared secret for that endpoint. Unset means the endpoint refuses to run.
+    reminder_dispatch_secret: str | None = None
 
     @field_validator("cors_origins", mode="before")
     @classmethod

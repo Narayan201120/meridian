@@ -67,18 +67,30 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     repository, so a single process is the working assumption, but running two
     workers would deliver every reminder twice. Serialize this with a Postgres
     advisory lock before scaling out.
+
+    A serverless host freezes the process between requests, so this loop is
+    switched off there and an external scheduler calls the dispatch endpoint.
+    Both at once would race the same pending reminder and deliver it twice.
     """
-    task = asyncio.create_task(_due_work_loop())
+    task: asyncio.Task | None = None
+    if settings.reminder_dispatch_enabled:
+        task = asyncio.create_task(_due_work_loop())
+    else:
+        logger.info(
+            "in-process due sweep disabled; reminders depend on the dispatch endpoint"
+        )
+
     try:
         yield
     finally:
-        task.cancel()
-        # Shielded so a slow sweep still gets its chance to unwind rather than
-        # being torn down mid-delivery.
-        try:
-            await asyncio.wait_for(asyncio.shield(task), timeout=5)
-        except (asyncio.CancelledError, asyncio.TimeoutError):
-            pass
+        if task is not None:
+            task.cancel()
+            # Shielded so a slow sweep still gets its chance to unwind rather than
+            # being torn down mid-delivery.
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=5)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
 
 
 def create_application() -> FastAPI:
