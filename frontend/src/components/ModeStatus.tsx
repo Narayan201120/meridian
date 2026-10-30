@@ -20,13 +20,14 @@ export function ModeStatus({
   onSignOut,
   onEnablePush,
   onDisablePush,
+  onCheckPush,
 }: {
   authSession: AuthSession | null;
   calendarStatus: string | null;
   isSyncing: boolean;
   isConnecting: boolean;
   isSigningOut: boolean;
-  pushState: { supported: boolean; reason?: string; subscribed?: boolean; permission?: string } | null;
+  pushState: { supported: boolean; reason?: string; retryable?: boolean; subscribed?: boolean; permission?: string } | null;
   pushMessage: string | null;
   isPushBusy: boolean;
   onRefresh: () => void;
@@ -35,6 +36,7 @@ export function ModeStatus({
   onSignOut: () => void;
   onEnablePush: () => void;
   onDisablePush: () => void;
+  onCheckPush: () => void;
 }) {
   const calendarDot = calendarStatus === "active" ? "bg-brass" : "bg-slate500";
   const { scheme, toggle } = useTheme();
@@ -59,11 +61,17 @@ export function ModeStatus({
               <View className={`h-1.5 w-1.5 rounded-full ${calendarDot}`} />
               <Text className="text-captiontext text-[14px] leading-5">Calendar: {calendarStatus ?? "checking..."}</Text>
             </View>
-            {pushState?.supported ? (
+            {pushState ? (
               <View className="flex-row items-center gap-1.5">
-                <View className={`h-1.5 w-1.5 rounded-full ${pushState.subscribed ? "bg-brass" : "bg-slate500"}`} />
+                <View
+                  className={`h-1.5 w-1.5 rounded-full ${
+                    pushState.supported && pushState.subscribed ? "bg-brass" : "bg-slate500"
+                  }`}
+                />
                 <Text className="text-captiontext text-[14px] leading-5">
-                  Reminders: {pushState.subscribed ? "on" : "only while the app is open"}
+                  {pushState.supported
+                    ? `Reminders: ${pushState.subscribed ? "on" : "only while the app is open"}`
+                    : `Reminders: ${pushState.reason}`}
                 </Text>
               </View>
             ) : null}
@@ -91,6 +99,11 @@ export function ModeStatus({
                 {isPushBusy ? "Enabling..." : "Enable reminders"}
               </Button>
             )
+          ) : null}
+          {pushState && !pushState.supported && pushState.retryable ? (
+            <Button variant="secondary" size="sm" loading={isPushBusy} onPress={onCheckPush}>
+              Check again
+            </Button>
           ) : null}
           {pushMessage ? (
             <Text className="text-captiontext text-[14px] leading-5 w-full">{pushMessage}</Text>

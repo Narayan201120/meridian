@@ -24,7 +24,7 @@ export function usePushNotifications() {
     try {
       setState(await readPushState());
     } catch {
-      setState({ supported: false, reason: "Could not read push status." });
+      setState({ supported: false, reason: "Could not read push status.", retryable: true });
     }
   }, [authSession]);
 

@@ -152,3 +152,47 @@ test.describe("turning off reminders when the server disagrees", () => {
     await expect(active(page).getByText(/may still be on/i)).toBeVisible();
   });
 });
+
+/**
+ * Reading the push config is its own failure mode.
+ *
+ * `getPushConfig` used to turn any non-OK response into
+ * `{ enabled: false, public_key: null }`, and `readPushState` translated that
+ * into "The server has no push keys configured." A 401 from an expired session
+ * and a 500 from a broken deploy both read as an operator configuration
+ * problem, and the reminders controls vanished with no explanation and no way
+ * to retry. This test fails if that relabelling comes back.
+ */
+test.describe("reading the push config when the server fails", () => {
+  test("a 500 on GET /push/config is not reported as missing push keys", async ({ page }) => {
+    let configStatus = 500;
+
+    await page.route("**/api/v1/push/config", async (route) => {
+      if (configStatus === 500) {
+        return route.fulfill({
+          status: 500,
+          contentType: "application/json",
+          body: JSON.stringify({ detail: "deliberate e2e failure" }),
+        });
+      }
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ enabled: true, public_key: "dGVzdA" }),
+      });
+    });
+
+    await ensureSignedIn(page);
+
+    // The failure has to be named as a failed read, not as an unconfigured
+    // server. Both halves matter: say the true thing, never the false one.
+    await expect(active(page).getByText(/could not check whether reminders/i)).toBeVisible();
+    await expect(page.getByText("The server has no push keys configured.")).toHaveCount(0);
+
+    // And the user must be able to try again without reloading.
+    await expect(taskAction(page, /^Check again$/)).toBeVisible();
+    configStatus = 200;
+    await taskAction(page, /^Check again$/).click();
+    await expect(taskAction(page, /^Enable reminders$/)).toBeVisible();
+  });
+});

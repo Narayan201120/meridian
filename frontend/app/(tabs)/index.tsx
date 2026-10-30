@@ -61,7 +61,7 @@ export default function HomeTab() {
   const { tasks, setTasks, isLoading, dueNotice, remindersByTask, pendingReminders, dispatchNotice, setPendingReminders, loadTasks, refreshRemindersForTask, replaceTask } = useTaskSync(authSession, setErrorMessage);
   const [calendarNotice, setCalendarNotice] = useState<string | null>(null);
   const { calendarStatus, isSyncing, isConnecting, handleSyncCalendar, handleConnectCalendar } = useCalendarSync(authSession, setErrorMessage, setCalendarNotice);
-  const { state: pushState, message: pushMessage, isBusy: isPushBusy, enable: enablePush, disable: disablePush } = usePushNotifications();
+  const { state: pushState, message: pushMessage, isBusy: isPushBusy, enable: enablePush, disable: disablePush, refresh: checkPush } = usePushNotifications();
   const {
     activeTaskId, activeTaskAction, scheduleEditorTaskId, scheduleEditorValue, setScheduleEditorValue,
     taskEditorTaskId, taskEditorTitle, taskEditorNotes, taskEditorPriority, taskEditorDuration,
@@ -145,6 +145,7 @@ export default function HomeTab() {
             isPushBusy={isPushBusy}
             onEnablePush={() => void enablePush()}
             onDisablePush={() => void disablePush()}
+            onCheckPush={() => void checkPush()}
             isSigningOut={isSigningOut}
             onRefresh={() => void loadTasks()}
             onSync={() => void handleSyncCalendar()}

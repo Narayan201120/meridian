@@ -10,10 +10,20 @@
 import { apiFetch, tasksRuntime } from "./tasks";
 
 export type PushState =
-  | { supported: false; reason: string }
+  | { supported: false; reason: string; retryable?: boolean }
   | { supported: true; subscribed: boolean; permission: NotificationPermission };
 
-type PushConfig = { enabled: boolean; public_key: string | null };
+/**
+ * Reading the config is not the same question as what the config says.
+ *
+ * This used to be `{ enabled, public_key }` for every outcome, so a 401 or a
+ * 500 became `enabled: false` and the UI told the user the operator had not
+ * configured push keys. That is a different, blame-shifting statement, and it
+ * left no way to retry. Keep the failure as a failure.
+ */
+type PushConfig =
+  | { kind: "ok"; enabled: boolean; public_key: string | null }
+  | { kind: "failed"; message: string };
 
 function isSupported(): boolean {
   return (
@@ -26,13 +36,34 @@ function isSupported(): boolean {
 
 export async function getPushConfig(): Promise<PushConfig> {
   if (!tasksRuntime.isApiMode) {
-    return { enabled: false, public_key: null };
+    return { kind: "ok", enabled: false, public_key: null };
   }
-  const response = await apiFetch(`${tasksRuntime.apiBaseUrl}/push/config`);
+
+  let response: Response;
+  try {
+    response = await apiFetch(`${tasksRuntime.apiBaseUrl}/push/config`);
+  } catch {
+    return { kind: "failed", message: configFailure("the network request failed") };
+  }
+
   if (!response.ok) {
-    return { enabled: false, public_key: null };
+    return { kind: "failed", message: configFailure(`the server said ${response.status}`) };
   }
-  return (await response.json()) as PushConfig;
+
+  try {
+    const body = (await response.json()) as { enabled?: unknown; public_key?: unknown };
+    return {
+      kind: "ok",
+      enabled: body.enabled === true,
+      public_key: typeof body.public_key === "string" ? body.public_key : null,
+    };
+  } catch {
+    return { kind: "failed", message: configFailure("the reply was unreadable") };
+  }
+}
+
+function configFailure(detail: string): string {
+  return `Could not check whether reminders can be turned on (${detail}).`;
 }
 
 export async function readPushState(): Promise<PushState> {
@@ -40,6 +71,9 @@ export async function readPushState(): Promise<PushState> {
     return { supported: false, reason: "This browser cannot receive push notifications." };
   }
   const config = await getPushConfig();
+  if (config.kind === "failed") {
+    return { supported: false, reason: config.message, retryable: true };
+  }
   if (!config.enabled || !config.public_key) {
     return { supported: false, reason: "The server has no push keys configured." };
   }
@@ -63,6 +97,12 @@ export async function enablePush(deviceName?: string): Promise<PushState> {
     return { supported: false, reason: "This browser cannot receive push notifications." };
   }
   const config = await getPushConfig();
+  if (config.kind === "failed") {
+    // Throwing, not returning a state, because the caller asked for reminders
+    // to be turned on. A failed config read means the answer is unknown, and
+    // the hook renders the reason while leaving the current state alone.
+    throw new Error(config.message);
+  }
   if (!config.enabled || !config.public_key) {
     return { supported: false, reason: "The server has no push keys configured." };
   }
