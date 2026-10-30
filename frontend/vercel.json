@@ -1,0 +1,6 @@
+{
+  "installCommand": "bun install --frozen-lockfile",
+  "buildCommand": "bunx expo export --platform web",
+  "outputDirectory": "dist",
+  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+}

@@ -190,6 +190,18 @@ supabase/
   config.toml       local Supabase CLI configuration
 ```
 
+## Deployment
+
+The live deployment runs on Vercel with the database on the hosted Supabase project.
+
+- Frontend: `https://meridian-web-plum.vercel.app` (static Expo web export)
+- Backend: `https://meridian-api-eight.vercel.app` (FastAPI on Vercel Functions)
+- Database: hosted Supabase, pooler in transaction mode (port 6543)
+
+The frontend needs `EXPO_PUBLIC_API_BASE_URL`, `EXPO_PUBLIC_SUPABASE_URL`, and `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY` at build time. The backend needs the same variables as local development, plus `MERIDIAN_REMINDER_DISPATCH_ENABLED=false` and `MERIDIAN_REMINDER_DISPATCH_SECRET`.
+
+Reminders cannot rely on the in-process timer on a serverless host, so the backend exposes `POST /api/v1/internal/dispatch` guarded by the shared secret, and the hosted Supabase project runs it through `pg_cron` every minute using the `http` extension. The in-process loop is switched off there so the two do not race and deliver the same reminder twice.
+
 ## Limits
 
 - Voice capture takes a pasted transcript. It does not record or transcribe audio.

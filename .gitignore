@@ -46,3 +46,4 @@ backend/e2e*.db-shm
 # OS/editor noise
 .DS_Store
 Thumbs.db
+backend/.dispatch-secret

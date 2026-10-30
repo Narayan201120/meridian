@@ -19,7 +19,14 @@ def get_engine() -> AsyncEngine:
         )
 
     if _engine is None:
-        _engine = create_async_engine(settings.database_url, echo=settings.database_echo)
+        _engine = create_async_engine(
+            settings.database_url,
+            echo=settings.database_echo,
+            connect_args={"statement_cache_size": 0},
+            pool_pre_ping=True,
+            pool_size=2,
+            max_overflow=0,
+        )
         _session_factory = async_sessionmaker(_engine, expire_on_commit=False)
 
     return _engine
