@@ -294,3 +294,35 @@ async def test_refresh_failure_during_confirm_leaves_no_duplicate(db_session, au
     )
     assert rows == [], "no Google event was created, so no local mirror may exist either"
     assert _event_posts() == [], "no event write may reach Google without a valid token"
+
+@pytest.mark.asyncio
+async def test_successful_freebusy_clears_a_stale_connection_error(db_session, auth_user_id, monkeypatch):
+    """A calendar that answers must stop advertising the last time it failed.
+
+    Reconnecting Google writes fresh tokens and sets status=active, but the
+    message from the previous failure stays in the row. `fetch_freebusy` then
+    returned 200 while the connection still said its token could not be
+    decrypted, so anything reading the row repeated a failure that no longer
+    existed. `sync_events` already clears the error on success; the free/busy
+    path did not.
+    """
+    _freshenv(monkeypatch)
+    conn = await _seed(
+        db_session, auth_user_id, expires_at=datetime.now(timezone.utc) + timedelta(hours=1)
+    )
+    conn.last_error_message = "Stored calendar token could not be decrypted. Reconnect Google Calendar."
+    conn.last_error_at = datetime.now(timezone.utc) - timedelta(days=1)
+    await db_session.commit()
+    _install(monkeypatch)
+
+    svc = GoogleCalendarService(db_session)
+    busy = await svc.fetch_freebusy(
+        UUID(auth_user_id),
+        datetime.now(timezone.utc),
+        datetime.now(timezone.utc) + timedelta(days=1),
+    )
+    assert busy == []
+
+    await db_session.refresh(conn)
+    assert conn.last_error_message is None, "a successful Google call must clear the stale error"
+    assert conn.last_error_at is None

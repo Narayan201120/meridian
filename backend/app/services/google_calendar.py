@@ -286,6 +286,14 @@ class GoogleCalendarService:
             )
         if response.is_error:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Google Calendar freeBusy query failed.")
+        if connection.last_error_message is not None or connection.last_error_at is not None:
+            # Google just accepted the token, so the previous failure is over.
+            # `sync_events` already clears the error this way; without the same
+            # step here a reconnected calendar kept the old "could not be
+            # decrypted" text in its row while every query succeeded.
+            connection.last_error_message = None
+            connection.last_error_at = None
+            await self.session.commit()
         data = response.json()
         calendars = data.get("calendars", {})
         primary = calendars.get("primary", {})
