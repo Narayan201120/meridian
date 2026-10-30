@@ -1,123 +1,198 @@
 # Meridian
 
-AI-assisted productivity app for fast task capture, calendar-aware planning, and reminders.
+Capture a task in seconds, give it a real time on your calendar, and get the reminder even after the tab is closed.
 
-## Current Repo State
+## What works
 
-- `backend/`
-  - FastAPI service with versioned routes under `/api/v1`
-  - async SQLAlchemy with direct Postgres access (not Supabase REST)
-  - task CRUD with soft delete, mutation-log audit trail, and due-date reminders
-  - Supabase JWT verification for protected routes
-  - text + voice capture structuring (heuristic title/priority/duration/schedule-intent)
-  - Google Calendar OAuth (Fernet-encrypted tokens), free/busy, event sync cache, suggest-blocks, and user-approved block confirm with idempotent writes
-  - reminder dispatch + acknowledge flow (`pending` → `sent` → `acknowledged`)
-  - offline-first sync via task mutation log (`GET /api/v1/tasks/mutations?since=`)
-- `supabase/`
-  - Postgres schema migrations (initial schema, `due_now` status, scopes `text[]` fix)
-  - local Supabase CLI config, RLS policies throughout
-- `frontend/`
-  - real Expo app using Bun, Expo Router tab flow (`Home`, `Inbox`, `Scheduled`, `Due now`, `Completed`)
-  - NativeWind design system (ivory canvas, forest-green primary, 8pt grid, floating cards)
-  - task capture/voice forms, suggest-times UI, reminders with dispatch + ack, calendar sync
-  - WatermelonDB on-device task cache with offline create + auto-push on reconnect
-  - SecureStore session persistence on native, `localStorage` on web
-  - demo mode (local data) vs API mode (Supabase sign-in + bearer token)
+- Capture by text or by pasted transcript. The structurer pulls out a title, notes, priority, duration, and whether the text reads like a scheduling request. It is a local heuristic, not a model call, and it never writes to your calendar on its own.
+- Suggest slots from real Google Calendar free/busy data, then confirm one. Confirming the same block twice does not create two events.
+- Reminders the server dispatches on its own timer through Web Push. The browser does not have to be open, and the client does not drive delivery.
+- Push payloads are encrypted per RFC 8291 with each device's own subscription keys. The server stores what the push service actually said, including the provider message id when the service returns one.
+- Failure states stay honest. A failed reminder read is not a delivery promise. A failed device delete is not "reminders off". A calendar write Google refused says so on screen.
 
-## Backend Run
-From `backend/`:
+## Stack
+
+| Part | What it uses |
+| --- | --- |
+| Frontend | Expo 55, Expo Router, React Native Web, NativeWind, TypeScript |
+| Backend | FastAPI, async SQLAlchemy, Pydantic v2, Python 3.12 |
+| Database | Postgres 17 through Supabase, with RLS on every table |
+| Auth | Supabase GoTrue. FastAPI verifies the JWT against the project JWKS |
+| Calendar | Google Calendar OAuth, Fernet-encrypted tokens, free/busy, event writes |
+| Push | Web Push with VAPID, RFC 8291 payload encryption, `http-ece` |
+
+The backend talks to Postgres directly. Supabase REST is not in the request path.
+
+## Run it locally
+
+You need Python 3.12, Bun, and a Postgres 17 database. The database can come from a local Supabase stack or a hosted Supabase project.
+
+### 1. Database
+
+For a fresh local Supabase stack, apply all seven migrations:
 
 ```bash
+supabase start
+supabase db reset
+```
+
+`supabase db reset` replays every file in `supabase/migrations/` in order.
+
+If the database already has the initial schema and you only need the newer migrations, use the script. It shows a plan and refuses to write without `--apply`:
+
+```bash
+cd backend
+python scripts/apply_migrations.py
+python scripts/apply_migrations.py --apply
+```
+
+### 2. Backend
+
+```bash
+cd backend
 python -m venv .venv
-.venv\Scripts\activate
-pip install -e .[dev]
+# Windows: .venv\Scripts\activate
+# macOS and Linux: source .venv/bin/activate
+pip install -e ".[dev]"
+
+cp .env.example .env
+```
+
+Fill in `backend/.env`:
+
+- `MERIDIAN_DATABASE_URL`, for example `postgresql+asyncpg://postgres:postgres@localhost:54322/postgres`
+- `MERIDIAN_SUPABASE_URL`, for example `http://127.0.0.1:54321`
+- `MERIDIAN_TOKEN_ENCRYPTION_KEY`, generated with the command in `.env.example`
+- The Google OAuth values if you want calendar features
+- The VAPID values from `python scripts/generate_vapid.py` if you want push
+
+Start the API:
+
+```bash
 uvicorn app.main:app --reload
 ```
 
-The API health endpoint will be available at:
+Health check: `GET http://127.0.0.1:8000/api/v1/health`
 
-```text
-GET /api/v1/health
-```
-
-Task endpoints are available under:
-
-```text
-/api/v1/tasks
-```
-
-Task endpoints now expect a Supabase bearer token:
-
-```text
-Authorization: Bearer <access-token>
-```
-
-Set `MERIDIAN_SUPABASE_URL` in `backend/.env` so FastAPI can verify tokens against Supabase JWKS.
-
-For web-based frontend development, the backend now allows local CORS origins for Expo on:
-
-```text
-http://localhost:8081
-http://127.0.0.1:8081
-http://localhost:19006
-http://127.0.0.1:19006
-```
-
-Override them with `MERIDIAN_CORS_ORIGINS` in `backend/.env` if needed.
-
-## Frontend Run
-From `frontend/`:
+### 3. Frontend
 
 ```bash
+cd frontend
 bun install
-bun run typecheck
-bun run start -- --localhost
+cp .env.example .env
 ```
 
-To put the frontend into API mode instead of demo mode:
-
-1. Copy `frontend/.env.example` to `frontend/.env`
-2. Set `EXPO_PUBLIC_SUPABASE_URL` to the local or hosted Supabase URL
-3. Set `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY` to the matching publishable key
-4. Keep `EXPO_PUBLIC_API_BASE_URL` pointed at the FastAPI server
-5. Sign in through the app with a real Supabase user
-
-## Database Foundation
-Migrations live in `supabase/migrations/`:
+Point the frontend at the backend and the same Supabase project:
 
 ```text
-20260409193000_initial_schema.sql   (tables, enums, RLS, triggers)
-20260425101500_add_due_now_task_status.sql
-20260903121211_scopes_text_array.sql (calendar scopes text[] fix)
+EXPO_PUBLIC_API_BASE_URL=http://localhost:8000/api/v1
+EXPO_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
+EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-publishable-key
 ```
 
-They create the Meridian tables, enums, RLS policies, and helper triggers for:
-- profiles
-- devices
-- tasks
-- task mutation log
-- voice captures
-- calendar connections
-- calendar events
-- task calendar blocks
-- reminders
-- notification deliveries
+Run the web app:
 
-The migrations assume Supabase Auth is enabled and `auth.users` exists.
+```bash
+bun run web
+```
+
+Native builds use the same code:
+
+```bash
+bun run android
+bun run ios
+```
+
+## Demo mode and API mode
+
+The app decides its mode from the environment at bundle time. If `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY` are both set, it runs in API mode and requires sign-in. If either is empty, it runs in demo mode with local data and no network.
+
+Demo mode exists so the styling and navigation can be exercised with no backend. It is not a substitute for the live suite: every polling hook returns early when `isApiMode` is false, so a broken reminder path cannot fail in demo mode.
+
+## Reminders and Web Push
+
+A background task in the API sweeps for due reminders. The interval is configurable:
+
+```text
+MERIDIAN_REMINDER_DISPATCH_INTERVAL_SECONDS=30
+```
+
+For each due reminder it fans out to every registered device, encrypts the payload with that device's `p256dh` and `auth` keys, signs the request with VAPID, and records the outcome. A reminder is marked `sent` only when at least one device accepted it. With no devices, no VAPID keys, or every send failed, it stays `pending` and is retried.
+
+The frontend registers a service worker and subscribes from the Enable reminders button. Browsers only allow a permission prompt from a user gesture, so it cannot happen on page load.
+
+Generate the three VAPID values once:
+
+```bash
+cd backend
+python scripts/generate_vapid.py
+```
+
+The keys must be base64 on one line. A PEM spans several lines, dotenv cannot represent that, and the app will fail to start.
 
 ## Verification
-From `backend/` (venv active):
+
+Backend:
 
 ```bash
-python -m pytest -q          # 59 tests
-python -m ruff check app tests
+cd backend
+python -m pytest -q          # 168 tests
+python -m ruff check app tests e2e_server.py scripts
 ```
 
-From `frontend/`:
+Frontend:
 
 ```bash
-bun run typecheck
+cd frontend
+bun run typecheck            # tsc
+bun run typecheck:tsrs       # optional Rust checker, same diagnostics
+bun run e2e                  # demo suite, then live suite
 ```
 
-## Data Access Choice
-The backend uses direct Postgres access with async SQLAlchemy rather than calling Supabase over REST. That keeps business logic, transactions, and future multi-step workflows inside the FastAPI service.
+`bun run e2e` runs two suites on purpose.
+
+- `bun run e2e:demo` has no backend. It proves the Tailwind and NativeWind pipeline compiled, the tabs navigate, and the screens render real content rather than empty chrome.
+- `bun run e2e:live` starts `backend/e2e_server.py`, which is the real FastAPI application with a file-backed SQLite database and a local GoTrue-compatible auth stub. It proves the data path, reminder dispatch, push registration, calendar failures, and session expiry without needing a Supabase project.
+
+The suites use ports 8098, 8099, and 8097. Override them with `MERIDIAN_E2E_BACKEND_PORT`, `MERIDIAN_E2E_FRONTEND_PORT`, and `MERIDIAN_E2E_DEMO_PORT`.
+
+On a machine without a Playwright browser download, set `E2E_BROWSER_CHANNEL=chrome` to use the installed Chrome. CI installs the bundled Chromium and leaves the variable empty.
+
+To prove a real push delivery against a real push service, run the headed probe and then read the server's record:
+
+```bash
+cd frontend
+node scripts/verify-real-push.mjs
+
+cd ../backend
+python scripts/check_last_delivery.py
+```
+
+The probe signs in, mints a real subscription, creates a reminder due now, and waits for the server sweep. It passes only when the browser reports a `push` event with a matching `showNotification`. The defaults point at the hosted stack; `PROBE_APP`, `PROBE_API`, `PROBE_SUPABASE_URL`, `PROBE_BROWSER`, `PROBE_EMAIL`, and `PROBE_PASSWORD` override them.
+
+## Repository layout
+
+```text
+backend/
+  app/              FastAPI application, models, schemas, services
+  scripts/          migration, VAPID, consent-link, delivery-check tools
+  tests/            pytest suite
+  e2e_server.py     real app plus auth stub for the live E2E suite
+frontend/
+  app/              Expo Router routes, five tabs
+  src/components/   design system and task UI
+  src/context/      tasks, auth, theme state
+  src/lib/          API client, auth, push, cache, formatting
+  e2e/              Playwright specs
+  public/           service worker
+supabase/
+  migrations/       schema, RLS, enums, triggers
+  config.toml       local Supabase CLI configuration
+```
+
+## Limits
+
+- Voice capture takes a pasted transcript. It does not record or transcribe audio.
+- The reminder sweep assumes one API process. Two workers would deliver twice until a Postgres advisory lock is added.
+- Google Calendar needs a real OAuth consent. Rotating `MERIDIAN_TOKEN_ENCRYPTION_KEY` invalidates stored tokens, so the user has to reconnect.
+- Real sign-in needs a Supabase project. Demo mode is the only path that works without one.

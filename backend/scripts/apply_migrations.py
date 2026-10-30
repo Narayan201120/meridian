@@ -1,4 +1,4 @@
-"""Apply the three unrun migrations to the configured database.
+"""Apply the migrations newer than the initial schema.
 
 Each migration runs in its own transaction and is idempotent, so re-running is
 safe. Every step prints what it found first, so the before state is visible in
