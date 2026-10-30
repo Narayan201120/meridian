@@ -27,11 +27,9 @@ type AuthPayload = {
   };
 };
 
-const runtimeEnv = (globalThis as RuntimeShape).process?.env ?? {};
+const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL ?? "";
+const publishableKey = process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? "";
 const sessionStorageKey = "meridian.auth.session";
-
-const supabaseUrl = runtimeEnv.EXPO_PUBLIC_SUPABASE_URL ?? "";
-const publishableKey = runtimeEnv.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? "";
 
 let inMemorySession: AuthSession | null = null;
 
